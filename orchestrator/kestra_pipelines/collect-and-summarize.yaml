@@ -1,0 +1,26 @@
+id: collect-and-summarize
+tasks:
+  - id: fetch-metrics
+    type: http
+    url: file://./examples/telemetry/metrics.json
+  - id: summarize
+    type: script
+    script: |
+      #!/usr/bin/env python3
+      import json
+      metrics = json.load(open('examples/telemetry/metrics.json'))
+      summary = {}
+      for svc, vals in metrics.items():
+          p95 = sorted(vals['latencies'])[int(0.95*len(vals['latencies']))]
+          p50 = sorted(vals['latencies'])[int(0.5*len(vals['latencies']))]
+          summary[svc] = {
+            'p50': p50,
+            'p95': p95,
+            'error_rate': sum(vals['errors'])/len(vals['errors']),
+            'cost': vals.get('cost', 0),
+          }
+      print(json.dumps(summary))
+  - id: emit
+    type: http
+    url: http://localhost:8000/api/summaries
+

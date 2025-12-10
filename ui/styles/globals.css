@@ -1,0 +1,29 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  background: #0b1221;
+  color: #e8eefc;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+a {
+  color: #8fb3ff;
+  text-decoration: none;
+}
+
+.card {
+  border: 1px solid #1e2a3f;
+  border-radius: 12px;
+  padding: 16px;
+  background: #0f172a;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+}
+
