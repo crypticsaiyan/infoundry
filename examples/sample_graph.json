@@ -1,0 +1,23 @@
+{
+  "nodes": [
+    {"id": "api_gateway", "type": "infrastructureNode", "data": {"label": "API Gateway", "type": "api_gateway", "icon": "🌐", "category": "network"}, "position": {"x": 0, "y": 50}},
+    {"id": "alb", "type": "infrastructureNode", "data": {"label": "ALB", "type": "alb", "icon": "⚖️", "category": "network"}, "position": {"x": 0, "y": 170}},
+    {"id": "ecs_cluster", "type": "infrastructureNode", "data": {"label": "ECS Cluster", "type": "ecs_cluster", "icon": "🐳", "category": "compute"}, "position": {"x": 250, "y": 50}},
+    {"id": "rds", "type": "infrastructureNode", "data": {"label": "RDS", "type": "rds", "icon": "🗄️", "category": "database"}, "position": {"x": 500, "y": 50}},
+    {"id": "elasticache", "type": "infrastructureNode", "data": {"label": "ElastiCache", "type": "elasticache", "icon": "⚡", "category": "cache"}, "position": {"x": 500, "y": 170}},
+    {"id": "cdn", "type": "infrastructureNode", "data": {"label": "CloudFront CDN", "type": "cdn", "icon": "🌍", "category": "network"}, "position": {"x": 0, "y": 290}}
+  ],
+  "edges": [
+    {"id": "e0", "source": "api_gateway", "target": "ecs_cluster", "type": "smoothstep", "label": "routes", "animated": true},
+    {"id": "e1", "source": "alb", "target": "ecs_cluster", "type": "smoothstep", "label": "routes", "animated": true},
+    {"id": "e2", "source": "ecs_cluster", "target": "rds", "type": "smoothstep", "label": "queries", "animated": false},
+    {"id": "e3", "source": "ecs_cluster", "target": "elasticache", "type": "smoothstep", "label": "queries", "animated": false},
+    {"id": "e4", "source": "cdn", "target": "alb", "type": "smoothstep", "label": "routes", "animated": true}
+  ],
+  "metadata": {
+    "pattern": "microservices_ecs",
+    "component_count": 6,
+    "edge_count": 5,
+    "layout": "hierarchical"
+  }
+}

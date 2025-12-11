@@ -1,0 +1,15 @@
+{
+  "architecture": {
+    "pattern": "microservices_ecs",
+    "components": ["api_gateway", "ecs_cluster", "alb", "rds", "elasticache", "hpa", "cdn"],
+    "topology": "2 services with microservices_ecs pattern on aws",
+    "scaling_strategy": "horizontal_autoscaling",
+    "estimated_cost_tier": "medium",
+    "rationale": "Selected microservices_ecs based on 2 services with high latency"
+  },
+  "inputs": {
+    "service_count": 2,
+    "cloud_provider": "aws"
+  },
+  "source": "heuristic"
+}

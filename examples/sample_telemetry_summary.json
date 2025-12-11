@@ -1,0 +1,24 @@
+{
+  "summary": {
+    "backend": {
+      "p50": 140,
+      "p95": 450,
+      "avg_latency": 220,
+      "error_rate": 0.02,
+      "cost": 60,
+      "cpu_usage": 0.7,
+      "memory_mb": 512
+    },
+    "frontend": {
+      "p50": 90,
+      "p95": 170,
+      "avg_latency": 120,
+      "error_rate": 0.01,
+      "cost": 35,
+      "cpu_usage": 0.4,
+      "memory_mb": 256
+    }
+  },
+  "collected_at": "2025-12-11T08:00:00.000000",
+  "source": "mock"
+}

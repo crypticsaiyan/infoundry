@@ -1,0 +1,131 @@
+id: end-to-end
+namespace: infoundry
+
+description: Master pipeline that chains all InFoundry steps
+
+inputs:
+  - id: repo_url
+    type: STRING
+    required: true
+    description: Git repository URL to analyze
+
+  - id: branch
+    type: STRING
+    required: false
+    description: Git branch to clone
+
+  - id: repository
+    type: STRING
+    required: false
+    description: GitHub repository for PR creation (owner/repo)
+
+  - id: llm_endpoint
+    type: STRING
+    required: false
+    description: LLM endpoint for AI-powered decisions
+
+  - id: skip_pr
+    type: BOOLEAN
+    required: false
+    description: Skip PR creation step
+
+  - id: skip_deploy
+    type: BOOLEAN
+    required: false
+    description: Skip test deployment step
+
+tasks:
+  - id: ingest_repo
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: ingest-repo
+    namespace: infoundry
+    inputs:
+      repo_url: "{{ inputs.repo_url }}"
+      branch: "{{ inputs.branch ?? 'main' }}"
+    wait: true
+
+  - id: ingest_telemetry
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: ingest-telemetry
+    namespace: infoundry
+    inputs:
+      services: "backend,frontend"
+    wait: true
+
+  - id: propose_architecture
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: propose-architecture
+    namespace: infoundry
+    inputs:
+      service_profile: "{{ outputs.ingest_repo.outputs.service_profile }}"
+      telemetry_summary: "{{ outputs.ingest_telemetry.outputs.telemetry_summary }}"
+      llm_endpoint: "{{ inputs.llm_endpoint ?? '' }}"
+    wait: true
+
+  - id: render_graph
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: render-graph
+    namespace: infoundry
+    inputs:
+      architecture_plan: "{{ outputs.propose_architecture.outputs.architecture_plan }}"
+    wait: true
+
+  - id: generate_iac
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: generate-iac
+    namespace: infoundry
+    inputs:
+      graph: "{{ outputs.render_graph.outputs.graph }}"
+      llm_endpoint: "{{ inputs.llm_endpoint ?? '' }}"
+    wait: true
+
+  - id: create_pr
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.skip_pr != true and inputs.repository != null }}"
+    then:
+      - id: pr_subflow
+        type: io.kestra.plugin.core.flow.Subflow
+        flowId: create-pr
+        namespace: infoundry
+        inputs:
+          iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+          repository: "{{ inputs.repository }}"
+        wait: true
+
+  - id: test_deploy
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.skip_deploy != true }}"
+    then:
+      - id: deploy_subflow
+        type: io.kestra.plugin.core.flow.Subflow
+        flowId: test-deploy
+        namespace: infoundry
+        inputs:
+          iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+        wait: true
+
+  - id: evaluate
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ inputs.skip_deploy != true }}"
+    then:
+      - id: eval_subflow
+        type: io.kestra.plugin.core.flow.Subflow
+        flowId: evaluate
+        namespace: infoundry
+        inputs:
+          deploy_result: "{{ outputs.test_deploy.outputs.deploy_subflow.outputs.deploy_result }}"
+        wait: true
+
+outputs:
+  - id: service_profile
+    type: FILE
+    value: "{{ outputs.ingest_repo.outputs.service_profile }}"
+  - id: architecture_plan
+    type: FILE
+    value: "{{ outputs.propose_architecture.outputs.architecture_plan }}"
+  - id: graph
+    type: FILE
+    value: "{{ outputs.render_graph.outputs.graph }}"
+  - id: iac_bundle
+    type: FILE
+    value: "{{ outputs.generate_iac.outputs.iac_bundle }}"

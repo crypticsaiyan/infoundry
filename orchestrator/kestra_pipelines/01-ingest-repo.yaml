@@ -1,0 +1,77 @@
+id: ingest-repo
+namespace: infoundry
+
+description: Analyzes a git repo to detect services and components
+
+inputs:
+  - id: repo_url
+    type: STRING
+    required: true
+    description: Git repository URL to analyze
+
+  - id: branch
+    type: STRING
+    required: false
+    description: Git branch to clone
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - service_profile.json
+    tasks:
+      - id: clone_repository
+        type: io.kestra.plugin.git.Clone
+        url: "{{ inputs.repo_url }}"
+        branch: "{{ inputs.branch ?? 'main' }}"
+        depth: 1
+
+      - id: analyze_repo
+        type: io.kestra.plugin.scripts.python.Script
+        script: |
+          import json
+          from pathlib import Path
+          
+          SERVICE_DIRS = ["services", "backend", "frontend", "apps", "api", "src", "server", "client", "web"]
+          INDICATORS = ["package.json", "requirements.txt", "Dockerfile", "go.mod", "pyproject.toml"]
+          
+          def detect_services(root):
+              services = {}
+              for name in SERVICE_DIRS:
+                  d = root / name
+                  if d.exists() and d.is_dir():
+                      if any((d / f).exists() for f in INDICATORS):
+                          lang = "unknown"
+                          if (d / "package.json").exists():
+                              lang = "javascript"
+                          elif (d / "requirements.txt").exists() or (d / "pyproject.toml").exists():
+                              lang = "python"
+                          elif (d / "go.mod").exists():
+                              lang = "go"
+                          services[name] = {
+                              "path": str(d),
+                              "has_dockerfile": (d / "Dockerfile").exists(),
+                              "language": lang
+                          }
+              if (root / "Dockerfile").exists() and not services:
+                  services["main"] = {"path": str(root), "has_dockerfile": True, "language": "unknown"}
+              return services
+          
+          repo = Path(".")
+          print("Analyzing directory:", repo.absolute())
+          print("Contents:", list(repo.iterdir()))
+          
+          profile = {
+              "services": detect_services(repo),
+              "repo_url": "{{ inputs.repo_url }}",
+              "execution_id": "{{ execution.id }}"
+          }
+          
+          with open("service_profile.json", "w") as f:
+              json.dump(profile, f, indent=2)
+          print(json.dumps(profile, indent=2))
+
+outputs:
+  - id: service_profile
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['service_profile.json'] }}"

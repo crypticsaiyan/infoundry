@@ -1,0 +1,69 @@
+id: namespace-config
+namespace: infoundry
+
+description: |
+  Namespace configuration for InFoundry Architect.
+  Contains shared variables, secrets references, and plugin configurations.
+
+variables:
+  # API Endpoints
+  OUMI_ENDPOINT: http://oumi:8000/v1/completions
+  CLINE_ENDPOINT: http://cline:8080/generate
+  PROMETHEUS_URL: http://prometheus:9090
+  
+  # Default configurations
+  DEFAULT_CLOUD_PROVIDER: aws
+  DEFAULT_IAC_FORMAT: terraform
+  DEFAULT_TEST_ENVIRONMENT: localstack
+  
+  # Timeout configurations
+  TASK_TIMEOUT_MINUTES: 30
+  PR_VALIDATION_TIMEOUT_MINUTES: 30
+  DEPLOY_TIMEOUT_MINUTES: 30
+  
+  # Retry configurations
+  DEFAULT_MAX_RETRIES: 3
+  DEFAULT_RETRY_INTERVAL: PT10S
+
+pluginDefaults:
+  # Default Python script configuration
+  - type: io.kestra.plugin.scripts.python.Script
+    values:
+      docker:
+        image: python:3.11-slim
+      beforeCommands:
+        - pip install --quiet requests
+
+  # Default Shell script configuration
+  - type: io.kestra.plugin.scripts.shell.Commands
+    values:
+      docker:
+        image: alpine:latest
+
+  # Default HTTP task configuration
+  - type: io.kestra.plugin.core.http.Request
+    values:
+      options:
+        timeout: 60000
+        retryOnConnectionFailure: true
+
+concurrency:
+  limit: 5
+  behavior: QUEUE
+
+# Note: Secrets should be configured in Kestra UI or via environment
+# Available secrets (configure these in Kestra):
+#   - GITHUB_TOKEN: GitHub Personal Access Token for PR operations
+#   - OUMI_API_KEY: API key for Oumi model service
+#   - AWS_ACCESS_KEY_ID: AWS credentials for deployment
+#   - AWS_SECRET_ACCESS_KEY: AWS credentials for deployment
+#   - CODERABBIT_API_KEY: CodeRabbit API key (if using API mode)
+
+# Labels for organization
+labels:
+  project: infoundry
+  team: platform
+  environment: development
+
+# Disabled until production ready
+disabled: false

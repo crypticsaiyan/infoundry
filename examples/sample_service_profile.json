@@ -1,0 +1,24 @@
+{
+  "services": {
+    "backend": {
+      "path": "repo/backend",
+      "has_dockerfile": true,
+      "language": "javascript",
+      "framework": "express",
+      "ports": [8000],
+      "databases": ["postgres", "redis"],
+      "queues": []
+    },
+    "frontend": {
+      "path": "repo/frontend",
+      "has_dockerfile": false,
+      "language": "javascript",
+      "framework": "nextjs",
+      "ports": [3000],
+      "databases": [],
+      "queues": []
+    }
+  },
+  "repo_url": "https://github.com/crypticsaiyan/GlobSEO.git",
+  "service_count": 2
+}
