@@ -1,0 +1,114 @@
+id: render-graph
+namespace: infoundry
+
+description: Converts architecture plan to React Flow graph format for UI
+
+inputs:
+  - id: architecture_plan
+    type: FILE
+    required: true
+    description: Architecture plan JSON from propose-architecture flow
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - graph.json
+    tasks:
+      - id: download_plan
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          architecture_plan.json: "{{ inputs.architecture_plan }}"
+
+      - id: render
+        type: io.kestra.plugin.scripts.python.Script
+        script: |
+          import json
+          
+          # Component styling
+          STYLES = {
+              "api_gateway": {"icon": "globe", "color": "#FF9800", "category": "network"},
+              "alb": {"icon": "share-2", "color": "#2196F3", "category": "network"},
+              "ecs_cluster": {"icon": "box", "color": "#4CAF50", "category": "compute"},
+              "eks_cluster": {"icon": "layers", "color": "#9C27B0", "category": "compute"},
+              "lambda_functions": {"icon": "zap", "color": "#FF5722", "category": "compute"},
+              "rds": {"icon": "database", "color": "#3F51B5", "category": "database"},
+              "dynamodb": {"icon": "grid", "color": "#009688", "category": "database"},
+              "elasticache": {"icon": "cpu", "color": "#E91E63", "category": "cache"},
+              "s3": {"icon": "archive", "color": "#795548", "category": "storage"},
+              "sqs": {"icon": "mail", "color": "#607D8B", "category": "messaging"},
+              "cdn": {"icon": "cloud", "color": "#00BCD4", "category": "network"},
+              "hpa": {"icon": "trending-up", "color": "#8BC34A", "category": "scaling"},
+          }
+          
+          # Connection rules
+          CONNECTIONS = {
+              "api_gateway": ["lambda_functions", "ecs_cluster", "alb"],
+              "alb": ["ecs_cluster", "eks_cluster"],
+              "ecs_cluster": ["rds", "elasticache", "dynamodb", "sqs"],
+              "eks_cluster": ["rds", "elasticache", "dynamodb", "sqs"],
+              "lambda_functions": ["dynamodb", "s3", "sqs", "rds"],
+              "cdn": ["s3", "alb", "api_gateway"],
+          }
+          
+          with open("architecture_plan.json") as f:
+              plan = json.load(f)
+          
+          arch = plan.get("architecture", {})
+          components = arch.get("components", [])
+          pattern = arch.get("pattern", "unknown")
+          
+          # Create nodes
+          nodes = []
+          x, y = 0, 0
+          col = 0
+          for i, comp in enumerate(components):
+              style = STYLES.get(comp, {"icon": "box", "color": "#999", "category": "other"})
+              nodes.append({
+                  "id": comp,
+                  "type": "infrastructureNode",
+                  "data": {
+                      "label": comp.replace("_", " ").title(),
+                      "type": comp,
+                      "icon": style["icon"],
+                      "category": style["category"]
+                  },
+                  "position": {"x": (i % 3) * 250, "y": (i // 3) * 150},
+                  "style": {"background": style["color"]}
+              })
+          
+          # Create edges
+          edges = []
+          edge_id = 0
+          comp_set = set(components)
+          for source, targets in CONNECTIONS.items():
+              if source in comp_set:
+                  for target in targets:
+                      if target in comp_set:
+                          edges.append({
+                              "id": f"e{edge_id}",
+                              "source": source,
+                              "target": target,
+                              "type": "smoothstep",
+                              "animated": source in ["api_gateway", "alb", "cdn"]
+                          })
+                          edge_id += 1
+          
+          graph = {
+              "nodes": nodes,
+              "edges": edges,
+              "metadata": {
+                  "pattern": pattern,
+                  "component_count": len(nodes),
+                  "edge_count": len(edges)
+              }
+          }
+          
+          with open("graph.json", "w") as f:
+              json.dump(graph, f, indent=2)
+          print(json.dumps(graph, indent=2))
+
+outputs:
+  - id: graph
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['graph.json'] }}"

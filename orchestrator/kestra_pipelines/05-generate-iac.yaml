@@ -1,0 +1,184 @@
+id: generate-iac
+namespace: infoundry
+
+description: Generates Terraform IaC from architecture graph
+
+inputs:
+  - id: graph
+    type: FILE
+    required: true
+    description: Graph JSON from render-graph flow
+
+  - id: cloud_provider
+    type: STRING
+    required: false
+    description: Target cloud provider (aws, gcp, azure)
+
+  - id: llm_endpoint
+    type: STRING
+    required: false
+    description: LLM endpoint for AI-powered code generation (optional)
+
+  - id: llm_model
+    type: STRING
+    required: false
+    description: LLM model name (e.g., codellama, gpt-4)
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - iac.zip
+      - iac_manifest.json
+    tasks:
+      - id: download_graph
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          graph.json: "{{ inputs.graph }}"
+
+      - id: generate
+        type: io.kestra.plugin.scripts.python.Script
+        env:
+          CLOUD_PROVIDER: "{{ inputs.cloud_provider ?? 'aws' }}"
+          LLM_ENDPOINT: "{{ inputs.llm_endpoint ?? '' }}"
+          LLM_MODEL: "{{ inputs.llm_model ?? 'codellama' }}"
+        script: |
+          import json
+          import os
+          import zipfile
+          import urllib.request
+          from pathlib import Path
+          from datetime import datetime
+          
+          cloud_provider = os.environ.get("CLOUD_PROVIDER", "aws")
+          llm_endpoint = os.environ.get("LLM_ENDPOINT", "")
+          llm_model = os.environ.get("LLM_MODEL", "codellama")
+          output_dir = Path("iac_output")
+          output_dir.mkdir(exist_ok=True)
+          
+          # Terraform templates
+          TEMPLATES = {
+              "api_gateway": 'resource "aws_api_gateway_rest_api" "{name}" {{\n  name = "{name}"\n}}',
+              "alb": 'resource "aws_lb" "{name}" {{\n  name = "{name}"\n  load_balancer_type = "application"\n}}',
+              "ecs_cluster": 'resource "aws_ecs_cluster" "{name}" {{\n  name = "{name}"\n}}',
+              "eks_cluster": 'resource "aws_eks_cluster" "{name}" {{\n  name = "{name}"\n  role_arn = aws_iam_role.eks.arn\n}}',
+              "rds": 'resource "aws_db_instance" "{name}" {{\n  identifier = "{name}"\n  engine = "postgres"\n  instance_class = "db.t3.micro"\n}}',
+              "dynamodb": 'resource "aws_dynamodb_table" "{name}" {{\n  name = "{name}"\n  billing_mode = "PAY_PER_REQUEST"\n  hash_key = "id"\n  attribute {{ name = "id"\n type = "S" }}\n}}',
+              "elasticache": 'resource "aws_elasticache_cluster" "{name}" {{\n  cluster_id = "{name}"\n  engine = "redis"\n  node_type = "cache.t3.micro"\n}}',
+              "lambda_functions": 'resource "aws_lambda_function" "{name}" {{\n  function_name = "{name}"\n  runtime = "python3.9"\n  handler = "main.handler"\n}}',
+              "cdn": 'resource "aws_cloudfront_distribution" "{name}" {{\n  enabled = true\n}}',
+              "s3": 'resource "aws_s3_bucket" "{name}" {{\n  bucket = "{name}"\n}}',
+          }
+          
+          def call_llm(prompt):
+              """Call LLM for code generation."""
+              if not llm_endpoint:
+                  return None
+              try:
+                  if "ollama" in llm_endpoint or "11434" in llm_endpoint:
+                      payload = {"model": llm_model, "prompt": prompt, "stream": False}
+                      url = llm_endpoint.rstrip("/") + "/api/generate"
+                  else:
+                      payload = {"model": llm_model, "messages": [{"role": "user", "content": prompt}]}
+                      url = llm_endpoint.rstrip("/") + "/v1/chat/completions"
+                  
+                  req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json"})
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      result = json.load(resp)
+                      if "response" in result:
+                          return result["response"]
+                      elif "choices" in result:
+                          return result["choices"][0]["message"]["content"]
+              except Exception as e:
+                  print(f"LLM error: {e}")
+              return None
+          
+          def generate_terraform(graph):
+              """Generate Terraform from graph using templates or LLM."""
+              nodes = graph.get("nodes", [])
+              pattern = graph.get("metadata", {}).get("pattern", "unknown")
+              
+              # Try LLM first
+              if llm_endpoint:
+                  prompt = f"""Generate Terraform code for AWS with these components:
+                  {json.dumps([n.get("id") for n in nodes])}
+                  Pattern: {pattern}
+                  Output ONLY valid Terraform code, no explanations."""
+                  
+                  llm_code = call_llm(prompt)
+                  if llm_code and "resource" in llm_code:
+                      print("Using LLM-generated Terraform")
+                      return llm_code
+              
+              # Fallback to templates
+              print("Using template-based generation")
+              lines = [
+                  f"# Generated by InFoundry Architect",
+                  f"# Timestamp: {datetime.utcnow().isoformat()}",
+                  f"# Pattern: {pattern}",
+                  "",
+                  "terraform {",
+                  '  required_version = ">= 1.0"',
+                  "}",
+                  "",
+                  f'provider "{cloud_provider}" {{',
+                  '  region = var.region',
+                  "}",
+                  "",
+              ]
+              
+              for node in nodes:
+                  node_type = node.get("data", {}).get("type", node.get("id"))
+                  node_id = node.get("id", "resource").replace("-", "_")
+                  if node_type in TEMPLATES:
+                      lines.append(TEMPLATES[node_type].format(name=node_id))
+                      lines.append("")
+              
+              return "\n".join(lines)
+          
+          # Load graph
+          with open("graph.json") as f:
+              graph = json.load(f)
+          
+          # Generate main.tf
+          main_tf = generate_terraform(graph)
+          (output_dir / "main.tf").write_text(main_tf)
+          
+          # Generate variables.tf
+          variables_tf = '''variable "region" {
+            description = "AWS region"
+            default = "us-east-1"
+          }'''
+          (output_dir / "variables.tf").write_text(variables_tf)
+          
+          # Generate outputs.tf
+          outputs_tf = "# Outputs\n"
+          for node in graph.get("nodes", []):
+              node_id = node.get("id", "").replace("-", "_")
+              outputs_tf += f'output "{node_id}_id" {{ value = "placeholder" }}\n'
+          (output_dir / "outputs.tf").write_text(outputs_tf)
+          
+          # Create ZIP
+          with zipfile.ZipFile("iac.zip", "w") as zf:
+              for f in output_dir.glob("*"):
+                  zf.write(f, f.name)
+          
+          # Manifest
+          manifest = {
+              "provider": cloud_provider,
+              "files": [f.name for f in output_dir.glob("*")],
+              "source": "llm" if llm_endpoint else "template"
+          }
+          with open("iac_manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+          
+          print(f"Generated IaC: {manifest}")
+
+outputs:
+  - id: iac_bundle
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['iac.zip'] }}"
+    
+  - id: iac_manifest
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['iac_manifest.json'] }}"

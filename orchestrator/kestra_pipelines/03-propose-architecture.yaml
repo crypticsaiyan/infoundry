@@ -1,0 +1,220 @@
+id: propose-architecture
+namespace: infoundry
+
+description: |
+  Proposes cloud architecture using Oumi LLM (or heuristic fallback).
+  Supports OpenAI-compatible APIs (Oumi, Ollama, vLLM, etc.)
+
+inputs:
+  - id: service_profile
+    type: FILE
+    required: true
+    description: Service profile JSON from ingest-repo flow
+    
+  - id: telemetry_summary
+    type: FILE
+    required: true
+    description: Telemetry summary JSON from ingest-telemetry flow
+
+  - id: llm_endpoint
+    type: STRING
+    required: false
+    description: LLM API endpoint (OpenAI-compatible). Leave empty for heuristic mode.
+
+  - id: llm_model
+    type: STRING
+    required: false
+    description: Model name (e.g., llama2, mistral, gpt-3.5-turbo)
+
+  - id: cloud_provider
+    type: STRING
+    required: false
+    description: Target cloud provider (aws, gcp, azure)
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - architecture_plan.json
+    tasks:
+      - id: download_inputs
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          service_profile.json: "{{ inputs.service_profile }}"
+          telemetry_summary.json: "{{ inputs.telemetry_summary }}"
+
+      - id: propose
+        type: io.kestra.plugin.scripts.python.Script
+        env:
+          LLM_ENDPOINT: "{{ inputs.llm_endpoint ?? '' }}"
+          LLM_MODEL: "{{ inputs.llm_model ?? 'llama2' }}"
+          CLOUD_PROVIDER: "{{ inputs.cloud_provider ?? 'aws' }}"
+        script: |
+          import json
+          import os
+          import urllib.request
+          import urllib.error
+          
+          llm_endpoint = os.environ.get("LLM_ENDPOINT", "")
+          llm_model = os.environ.get("LLM_MODEL", "llama2")
+          cloud_provider = os.environ.get("CLOUD_PROVIDER", "aws")
+          
+          # Load inputs
+          with open("service_profile.json") as f:
+              service_profile = json.load(f)
+          
+          with open("telemetry_summary.json") as f:
+              telemetry_summary = json.load(f)
+          
+          services = service_profile.get("services", {})
+          telemetry = telemetry_summary.get("summary", {})
+          
+          def call_llm(endpoint, model, prompt):
+              """Call OpenAI-compatible LLM API."""
+              # Try OpenAI format first
+              payload = {
+                  "model": model,
+                  "messages": [{"role": "user", "content": prompt}],
+                  "temperature": 0.7,
+                  "max_tokens": 2000
+              }
+              
+              # Detect Ollama vs OpenAI format
+              if "ollama" in endpoint.lower() or "11434" in endpoint:
+                  # Ollama format
+                  payload = {
+                      "model": model,
+                      "prompt": prompt,
+                      "stream": False
+                  }
+                  api_url = endpoint.rstrip("/") + "/api/generate"
+              else:
+                  # OpenAI-compatible format
+                  api_url = endpoint.rstrip("/") + "/v1/chat/completions"
+              
+              try:
+                  req = urllib.request.Request(
+                      api_url,
+                      data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"}
+                  )
+                  with urllib.request.urlopen(req, timeout=120) as resp:
+                      result = json.load(resp)
+                      
+                      # Parse response based on format
+                      if "response" in result:  # Ollama
+                          return result["response"]
+                      elif "choices" in result:  # OpenAI
+                          return result["choices"][0]["message"]["content"]
+                      return None
+              except Exception as e:
+                  print(f"LLM API error: {e}")
+                  return None
+          
+          def parse_llm_response(response):
+              """Extract JSON from LLM response."""
+              if not response:
+                  return None
+              try:
+                  # Try to find JSON in response
+                  start = response.find("{")
+                  end = response.rfind("}") + 1
+                  if start >= 0 and end > start:
+                      return json.loads(response[start:end])
+              except:
+                  pass
+              return None
+          
+          def heuristic_proposal(services, telemetry, cloud_provider):
+              """Fallback when LLM unavailable."""
+              num_services = len(services)
+              has_high_latency = any(s.get("p95", 0) > 400 for s in telemetry.values())
+              total_cost = sum(s.get("cost", 0) for s in telemetry.values())
+              
+              if num_services <= 2:
+                  pattern = "serverless"
+                  components = ["api_gateway", "lambda_functions", "dynamodb"]
+              elif num_services > 4:
+                  pattern = "kubernetes"
+                  components = ["eks_cluster", "alb", "rds", "elasticache"]
+              else:
+                  pattern = "microservices_ecs"
+                  components = ["ecs_cluster", "alb", "rds", "elasticache"]
+              
+              if has_high_latency:
+                  components.extend(["hpa", "cdn"])
+              
+              for svc in services.values():
+                  if "postgres" in str(svc) and "rds" not in components:
+                      components.append("rds")
+                  if "redis" in str(svc) and "elasticache" not in components:
+                      components.append("elasticache")
+              
+              return {
+                  "pattern": pattern,
+                  "components": list(set(components)),
+                  "topology": f"{num_services} services with {pattern} on {cloud_provider}",
+                  "scaling_strategy": "horizontal_autoscaling" if has_high_latency else "vertical_scaling",
+                  "estimated_cost_tier": "high" if total_cost > 100 else "medium" if total_cost > 50 else "low",
+                  "rationale": f"Selected {pattern} for {num_services} services"
+              }
+          
+          # Build prompt for LLM
+          prompt = f"""You are an expert cloud architect. Analyze this system and propose the optimal architecture.
+
+          SERVICE PROFILE:
+          {json.dumps(services, indent=2)}
+
+          TELEMETRY (latency in ms, cost in $):
+          {json.dumps(telemetry, indent=2)}
+
+          TARGET CLOUD: {cloud_provider}
+
+          Respond with ONLY a valid JSON object:
+          {{
+            "pattern": "serverless|microservices_ecs|kubernetes|event_driven",
+            "components": ["list", "of", "aws", "components"],
+            "topology": "brief description",
+            "scaling_strategy": "horizontal_autoscaling|vertical_scaling",
+            "estimated_cost_tier": "low|medium|high",
+            "rationale": "why this architecture"
+          }}"""
+          
+          # Try LLM first, fallback to heuristics
+          proposal = None
+          source = "heuristic"
+          
+          if llm_endpoint:
+              print(f"Calling LLM: {llm_endpoint} with model: {llm_model}")
+              llm_response = call_llm(llm_endpoint, llm_model, prompt)
+              if llm_response:
+                  proposal = parse_llm_response(llm_response)
+                  if proposal:
+                      source = "llm"
+                      print("LLM response parsed successfully")
+                  else:
+                      print("Failed to parse LLM response, using heuristic")
+          else:
+              print("No LLM endpoint configured, using heuristic")
+          
+          if not proposal:
+              proposal = heuristic_proposal(services, telemetry, cloud_provider)
+          
+          output = {
+              "architecture": proposal,
+              "inputs": {
+                  "service_count": len(services),
+                  "cloud_provider": cloud_provider,
+                  "llm_model": llm_model if llm_endpoint else None
+              },
+              "source": source
+          }
+          
+          with open("architecture_plan.json", "w") as f:
+              json.dump(output, f, indent=2)
+          print(json.dumps(output, indent=2))
+
+outputs:
+  - id: architecture_plan
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['architecture_plan.json'] }}"

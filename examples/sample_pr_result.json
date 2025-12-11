@@ -1,0 +1,7 @@
+{
+  "pr_url": "https://github.com/your-org/your-repo/pull/42",
+  "pr_number": 42,
+  "branch": "infoundry/iac-aws-20251211-120000",
+  "repository": "your-org/your-repo",
+  "files_uploaded": ["main.tf", "variables.tf", "outputs.tf"]
+}

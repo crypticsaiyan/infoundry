@@ -1,0 +1,74 @@
+id: evaluate
+namespace: infoundry
+
+description: Computes reward score based on deployment results
+
+inputs:
+  - id: deploy_result
+    type: FILE
+    required: true
+    description: Deploy result JSON from test-deploy flow
+
+  - id: architecture_plan
+    type: FILE
+    required: false
+    description: Architecture plan for evaluation context
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - evaluation_result.json
+    tasks:
+      - id: download_inputs
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          deploy_result.json: "{{ inputs.deploy_result }}"
+
+      - id: evaluate
+        type: io.kestra.plugin.scripts.python.Script
+        script: |
+          import json
+          from datetime import datetime
+          
+          with open("deploy_result.json") as f:
+              deploy = json.load(f)
+          
+          # Compute reward components
+          deploy_success = 1.0 if deploy.get("success") else 0.0
+          
+          smoke = deploy.get("smoke_tests", {})
+          total_tests = smoke.get("passed", 0) + smoke.get("failed", 0)
+          test_score = smoke.get("passed", 0) / max(total_tests, 1)
+          
+          # Bonus for clean deployment
+          status = deploy.get("deploy_status", "")
+          status_bonus = 0.1 if status == "success" else 0.0
+          
+          # Compute final reward (0.0 to 1.0)
+          reward = (deploy_success * 0.5) + (test_score * 0.4) + status_bonus
+          
+          result = {
+              "reward": round(reward, 3),
+              "components": {
+                  "deploy_success": deploy_success,
+                  "test_score": round(test_score, 3),
+                  "status_bonus": status_bonus
+              },
+              "metrics": {
+                  "tests_passed": smoke.get("passed", 0),
+                  "tests_failed": smoke.get("failed", 0),
+                  "deploy_status": status
+              },
+              "evaluated_at": datetime.utcnow().isoformat(),
+              "recommendation": "proceed" if reward > 0.7 else "review" if reward > 0.4 else "reject"
+          }
+          
+          with open("evaluation_result.json", "w") as f:
+              json.dump(result, f, indent=2)
+          print(json.dumps(result, indent=2))
+
+outputs:
+  - id: evaluation_result
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['evaluation_result.json'] }}"
