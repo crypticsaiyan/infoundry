@@ -33,11 +33,19 @@ tasks:
           lats = sorted(metrics.get("latencies", []))
           errs = metrics.get("errors", [])
           n = len(lats)
+          if n == 0:
+              return {
+                  "p50": 0,
+                  "p95": 0,
+                  "avg_latency": 0,
+                  "error_rate": 0,
+                  "cost": metrics.get("cost", 0)
+              }
           return {
-              "p50": lats[n // 2] if n else 0,
-              "p95": lats[int(n * 0.95)] if n else 0,
+              "p50": lats[n // 2],
+              "p95": lats[max(0, int(n * 0.95) - 1)],
               "avg_latency": sum(lats) / n if n else 0,
-              "error_rate": sum(errs) / len(errs) if errs else 0,
+              "error_rate": sum(errs) / max(len(errs), 1),
               "cost": metrics.get("cost", 0)
           }
       
