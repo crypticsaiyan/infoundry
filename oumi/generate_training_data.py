@@ -10,7 +10,6 @@ Options:
   --output FILE  Output file path (default: generated_training_data.jsonl)
 """
 
-import json
 import random
 import argparse
 from pathlib import Path

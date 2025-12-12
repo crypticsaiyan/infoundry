@@ -3,7 +3,6 @@ Oumi SFT Training Script for InFoundry Architect
 Trains on generated_training_data.jsonl with proper architecture plan format.
 """
 
-import json
 from pathlib import Path
 
 from oumi import train
@@ -38,8 +37,8 @@ def run_training():
     # Configure training - use 0.5B model but train longer for better results
     config = TrainingConfig(
         model=ModelParams(
-            # Using 0.5B model (fits in 5.6GB GPU)
-            model_name="Qwen/Qwen2.5-0.5B-Instruct",
+            # Using 1.5B model (trained on Colab T4)
+            model_name="Qwen/Qwen2.5-1.5B-Instruct",
             trust_remote_code=True,
         ),
         training=TrainingParams(
