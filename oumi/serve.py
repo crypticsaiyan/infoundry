@@ -33,7 +33,59 @@ class CompletionRequest(BaseModel):
 
 # Configuration
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-USE_OLLAMA = os.environ.get("USE_OLLAMA", "true").lower() == "true"
+USE_OLLAMA = os.environ.get("USE_OLLAMA", "false").lower() == "true"
+USE_OUMI = os.environ.get("USE_OUMI", "true").lower() == "true"
+OUMI_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
+OUMI_ADAPTER = "./trained_model"
+
+# Lazy-loaded Oumi model
+_oumi_config = None
+
+def get_oumi_config():
+    """Get or create Oumi inference config (lazy load)."""
+    global _oumi_config
+    if _oumi_config is None:
+        try:
+            from oumi import infer
+            from oumi.core.configs import InferenceConfig
+            from oumi.core.configs.params.model_params import ModelParams
+            from oumi.core.configs.params.generation_params import GenerationParams
+            
+            _oumi_config = InferenceConfig(
+                model=ModelParams(
+                    model_name=OUMI_MODEL,
+                    adapter_model=OUMI_ADAPTER if os.path.exists(OUMI_ADAPTER) else None,
+                    trust_remote_code=True,
+                ),
+                generation=GenerationParams(
+                    max_new_tokens=400,
+                    temperature=0.1,
+                ),
+            )
+            print(f"✓ Loaded Oumi model: {OUMI_MODEL}")
+        except Exception as e:
+            print(f"Failed to load Oumi: {e}")
+            _oumi_config = False
+    return _oumi_config
+
+
+def call_oumi(prompt: str) -> Optional[str]:
+    """Call the trained Oumi model for inference."""
+    config = get_oumi_config()
+    if not config:
+        return None
+    try:
+        from oumi import infer
+        response = infer(config, [prompt])
+        result = str(response[0])
+        if "ASSISTANT:" in result:
+            result = result.split("ASSISTANT:")[-1].strip()
+        if "] metadata=" in result:
+            result = result.split("] metadata=")[0]
+        return result
+    except Exception as e:
+        print(f"Oumi error: {e}")
+        return None
 
 
 def call_ollama(prompt: str, model: str = "codellama") -> Optional[str]:
@@ -139,9 +191,16 @@ Input: {prompt}
 JSON Response:"""
     
     response = None
-    if USE_OLLAMA:
+    
+    # Try Oumi first (trained model)
+    if USE_OUMI:
+        response = call_oumi(full_prompt)
+    
+    # Fall back to Ollama
+    if not response and USE_OLLAMA:
         response = call_ollama(full_prompt, request.model)
     
+    # Ultimate fallback to heuristics
     if not response:
         response = json.dumps(heuristic_response(prompt))
     
@@ -172,9 +231,16 @@ async def completions(request: CompletionRequest):
     prompt = request.prompt or ""
     
     response = None
-    if USE_OLLAMA:
+    
+    # Try Oumi first
+    if USE_OUMI:
+        response = call_oumi(prompt)
+    
+    # Fall back to Ollama
+    if not response and USE_OLLAMA:
         response = call_ollama(prompt, request.model)
     
+    # Ultimate fallback
     if not response:
         response = json.dumps(heuristic_response(prompt))
     

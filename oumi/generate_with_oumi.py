@@ -91,7 +91,7 @@ Respond with a JSON object in this exact format:
 Architecture recommendation (JSON only):"""
 
 
-def generate_with_oumi(model_name: str = "Qwen/Qwen2.5-0.5B-Instruct", 
+def generate_with_oumi(model_name: str = "Qwen/Qwen2.5-1.5B-Instruct", 
                        use_trained: bool = False,
                        num_examples: int = 50) -> List[Dict]:
     """
@@ -204,7 +204,7 @@ def main():
     parser.add_argument("--count", type=int, default=20, help="Number of examples")
     parser.add_argument("--output", type=str, default="oumi_synthetic_data.jsonl", help="Output file")
     parser.add_argument("--use-trained", action="store_true", help="Use the trained model adapter")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-0.5B-Instruct", help="Base model")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-1.5B-Instruct", help="Base model")
     args = parser.parse_args()
     
     # Generate data

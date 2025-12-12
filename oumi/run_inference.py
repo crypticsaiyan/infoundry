@@ -33,7 +33,7 @@ Do NOT include any text outside the JSON. Components must be strings, not object
 # Create config with proper dataclass objects
 config = InferenceConfig(
     model=ModelParams(
-        model_name="Qwen/Qwen2.5-0.5B-Instruct",
+        model_name="Qwen/Qwen2.5-1.5B-Instruct",
         adapter_model="./trained_model",
         trust_remote_code=True,
     ),
