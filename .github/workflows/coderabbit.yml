@@ -18,7 +18,8 @@ jobs:
   iac-validation:
     name: IaC Validation Gate
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
+    # Only run for pull_request events (not pull_request_review_comment) and skip drafts
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     
     steps:
       - name: Checkout Code
@@ -176,7 +177,8 @@ jobs:
   coderabbit-gate:
     name: CodeRabbit Review Gate
     runs-on: ubuntu-latest
-    if: github.event.pull_request.draft == false
+    # Only run for pull_request events (not pull_request_review_comment) and skip drafts
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     
     steps:
       - name: Check CodeRabbit Configuration
