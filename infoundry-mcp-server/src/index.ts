@@ -468,17 +468,17 @@ variable "environment" {
 }
 
 variable "db_username" {
-  description = "Database master username"
+  description = "Database master username - provide via tfvars or TF_VAR_db_username"
   type        = string
-  default     = "admin"
   sensitive   = true
+  # No default - must be provided via tfvars or environment variable
 }
 
 variable "db_password" {
-  description = "Database master password"
+  description = "Database master password - provide via tfvars or TF_VAR_db_password"
   type        = string
-  default     = "changeme123!"
   sensitive   = true
+  # No default - must be provided via tfvars or environment variable
 }
 
 `;

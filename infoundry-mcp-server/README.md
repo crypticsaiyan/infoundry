@@ -45,3 +45,25 @@ cline "Analyze this repo and generate cloud architecture with Terraform"
 2. **propose_architecture** → Oumi recommends pattern
 3. **generate_iac** → Creates Terraform files
 4. **validate_iac** → Validates with terraform + tflint
+
+## Sensitive Variables
+
+Generated Terraform requires you to provide database credentials (not committed to source):
+
+```bash
+# Option 1: Environment variables
+export TF_VAR_db_username="your_username"
+export TF_VAR_db_password="your_secure_password"
+
+# Option 2: Create terraform.tfvars (add to .gitignore!)
+cat > terraform.tfvars << EOF
+db_username = "your_username"
+db_password = "your_secure_password"
+EOF
+
+# Option 3: Pass at runtime
+terraform apply -var="db_username=admin" -var="db_password=secret"
+```
+
+> **Note:** Never commit credentials to version control. Use CI/CD secrets in production.
+
