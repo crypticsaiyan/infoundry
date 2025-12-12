@@ -1,13 +1,22 @@
 #!/usr/bin/env node
 /**
  * Test script for InFoundry MCP Server
+ * 
+ * Usage: node test.mjs
  */
 
 import { spawn } from 'child_process';
 import * as readline from 'readline';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
+
+// Compute paths relative to this file for portability
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, '..');
 
 const server = spawn('node', ['dist/index.js'], {
-  cwd: '/home/cryptosaiyan/Documents/infoundry/infoundry-mcp-server',
+  cwd: __dirname,  // Run from infoundry-mcp-server directory
   stdio: ['pipe', 'pipe', 'pipe']
 });
 
@@ -46,12 +55,12 @@ setTimeout(() => {
   // 1. List available tools
   sendRequest('tools/list');
   
-  // 2. Test analyze_repo after a delay
+  // 2. Test analyze_repo after a delay - use project root for portability
   setTimeout(() => {
     sendRequest('tools/call', {
       name: 'analyze_repo',
       arguments: {
-        repoPath: '/home/cryptosaiyan/Documents/infoundry'
+        repoPath: projectRoot  // Relative to this test file's location
       }
     });
   }, 500);

@@ -8,9 +8,17 @@ on:
 
 jobs:
   analyze-architecture:
+    # Security: Only trigger for:
+    # 1. Issues with 'architecture' label, OR
+    # 2. Comments by trusted users (OWNER/MEMBER/COLLABORATOR) mentioning @cline on architecture-labeled issues
     if: |
       (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'architecture')) ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@cline'))
+      (github.event_name == 'issue_comment' && 
+        contains(github.event.comment.body, '@cline') && 
+        contains(github.event.issue.labels.*.name, 'architecture') &&
+        (github.event.comment.author_association == 'OWNER' || 
+         github.event.comment.author_association == 'MEMBER' || 
+         github.event.comment.author_association == 'COLLABORATOR'))
     runs-on: ubuntu-latest
     
     steps:
@@ -53,18 +61,35 @@ jobs:
       
       - name: Analyze and Propose Architecture
         id: analyze
+        env:
+          # Pass issue body as environment variable to avoid shell injection
+          ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          ISSUE_BODY="${{ github.event.issue.body }}"
+          # Safely write issue context to a file using Python (no shell expansion)
+          python3 -c "
+          import os
+          content = os.environ.get('ISSUE_BODY', '')
+          # Sanitize: remove any potentially dangerous characters
+          safe_content = content.replace('\`', '').replace('\$', '')[:2000]
+          with open('issue_context.txt', 'w') as f:
+              f.write(safe_content)
+          "
           
-          cline "Using the infoundry-architect MCP tools:
+          # Create prompt file safely
+          cat > cline_prompt.txt << 'PROMPT_EOF'
+          Using the infoundry-architect MCP tools:
           1. Run analyze_repo on this repository
           2. Run propose_architecture with the profile
           3. Run generate_iac to create Terraform in ./infra/generated
           4. Run validate_iac to check the output
           
-          Context from issue: $ISSUE_BODY
+          Read the issue context from issue_context.txt for additional requirements.
           
-          Save the architecture summary to architecture_output.md"
+          Save the architecture summary to architecture_output.md
+          PROMPT_EOF
+          
+          # Run cline with the prompt file
+          cline -f cline_prompt.txt -f issue_context.txt "Execute the tasks in cline_prompt.txt"
           
           if [ -f architecture_output.md ]; then
             echo "output<<EOF" >> $GITHUB_OUTPUT
