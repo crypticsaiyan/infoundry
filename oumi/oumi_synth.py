@@ -31,7 +31,23 @@ Respond ONLY with valid JSON in this format:
 
 
 def generate_with_oumi(count: int = 50, output_path: str = "oumi_synth_data.jsonl"):
-    """Generate training data using Oumi inference."""
+    """
+    Generate synthetic architecture recommendation examples using the Oumi inference engine.
+    
+    This function configures an Oumi InferenceConfig with preset model and generation parameters,
+    then synthesizes `count` examples by sampling attributes, building prompts, invoking the
+    inference engine, cleaning the assistant response, and assembling each example as a
+    message list (system, user, assistant). All successful examples are written to `output_path`
+    as one JSON object per line and also returned.
+    
+    Parameters:
+        count (int): Number of samples to generate (default 50).
+        output_path (str): File path to write JSON Lines output (default "oumi_synth_data.jsonl").
+    
+    Returns:
+        list: A list of generated example objects, each containing a "messages" list with
+        roles "system", "user", and "assistant".
+    """
     
     # Configure the inference engine
     config = InferenceConfig(
@@ -110,6 +126,11 @@ def generate_with_oumi(count: int = 50, output_path: str = "oumi_synth_data.json
 
 
 def main():
+    """
+    Parse command-line arguments and invoke data generation.
+    
+    Accepts --count (number of samples, default 50) and --output (output file path, default "oumi_synth_data.jsonl"), then calls generate_with_oumi with those values.
+    """
     parser = argparse.ArgumentParser(description="Generate training data with Oumi")
     parser.add_argument("--count", type=int, default=50, help="Number of samples")
     parser.add_argument("--output", type=str, default="oumi_synth_data.jsonl", help="Output file")
