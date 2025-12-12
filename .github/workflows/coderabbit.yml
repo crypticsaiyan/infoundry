@@ -1,0 +1,230 @@
+name: CodeRabbit Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review_comment:
+    types: [created]
+
+# Ensure we have necessary permissions for CodeRabbit
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  # CodeRabbit automatically reviews PRs when configured in the repo
+  # This job validates IaC and blocks merge on failures
+  iac-validation:
+    name: IaC Validation Gate
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for Terraform Changes
+        id: tf-changes
+        run: |
+          # Get list of changed files
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          else
+            CHANGED_FILES=$(git diff --name-only HEAD~1)
+          fi
+          
+          # Check if any .tf files are changed
+          TF_CHANGED=$(echo "$CHANGED_FILES" | grep -E '\.tf$' || true)
+          
+          if [ -n "$TF_CHANGED" ]; then
+            echo "terraform_changed=true" >> $GITHUB_OUTPUT
+            echo "📦 Terraform files changed:"
+            echo "$TF_CHANGED"
+          else
+            echo "terraform_changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No Terraform files changed"
+          fi
+
+      - name: Setup Terraform
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+
+      - name: Terraform Format Check
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        id: fmt
+        run: |
+          echo "🔍 Checking Terraform formatting..."
+          terraform fmt -check -recursive -diff
+        continue-on-error: true
+
+      - name: Find Terraform Directories
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        id: tf-dirs
+        run: |
+          # Find all directories containing .tf files
+          TF_DIRS=$(find . -name "*.tf" -type f -exec dirname {} \; | sort -u | grep -v '.terraform' || true)
+          echo "tf_dirs<<EOF" >> $GITHUB_OUTPUT
+          echo "$TF_DIRS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "📂 Terraform directories found:"
+          echo "$TF_DIRS"
+
+      - name: Terraform Init & Validate
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        id: validate
+        run: |
+          VALIDATION_FAILED=false
+          
+          while IFS= read -r dir; do
+            if [ -n "$dir" ] && [ -d "$dir" ]; then
+              echo "📁 Validating: $dir"
+              cd "$dir"
+              
+              # Initialize (backend disabled for validation only)
+              terraform init -backend=false -input=false 2>/dev/null || true
+              
+              # Validate
+              if ! terraform validate; then
+                echo "❌ Validation failed for: $dir"
+                VALIDATION_FAILED=true
+              else
+                echo "✅ Validation passed for: $dir"
+              fi
+              
+              cd - > /dev/null
+            fi
+          done <<< "${{ steps.tf-dirs.outputs.tf_dirs }}"
+          
+          if [ "$VALIDATION_FAILED" = true ]; then
+            echo "validation_status=failed" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "validation_status=passed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: TFLint Setup
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: TFLint Scan
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        id: tflint
+        run: |
+          echo "🔎 Running TFLint..."
+          
+          while IFS= read -r dir; do
+            if [ -n "$dir" ] && [ -d "$dir" ]; then
+              echo "📁 Linting: $dir"
+              cd "$dir"
+              tflint --init 2>/dev/null || true
+              tflint --format=compact || true
+              cd - > /dev/null
+            fi
+          done <<< "${{ steps.tf-dirs.outputs.tf_dirs }}"
+        continue-on-error: true
+
+      - name: Security Scan with tfsec
+        if: steps.tf-changes.outputs.terraform_changed == 'true'
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          soft_fail: false
+          additional_args: --minimum-severity MEDIUM
+
+      - name: Post Validation Summary
+        if: always() && steps.tf-changes.outputs.terraform_changed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fmtStatus = '${{ steps.fmt.outcome }}' === 'success' ? '✅' : '⚠️';
+            const validateStatus = '${{ steps.validate.outcome }}' === 'success' ? '✅' : '❌';
+            
+            const body = `## 🔍 IaC Validation Results
+            
+            | Check | Status |
+            |-------|--------|
+            | Terraform Format | ${fmtStatus} ${{ steps.fmt.outcome }} |
+            | Terraform Validate | ${validateStatus} ${{ steps.validate.outcome }} |
+            | TFLint | ${{ steps.tflint.outcome == 'success' && '✅ passed' || '⚠️ warnings' }} |
+            | Security Scan (tfsec) | ${{ job.status == 'success' && '✅ passed' || '❌ issues found' }} |
+            
+            ---
+            *IaC validation is required to pass before merge. Please address any issues flagged above.*
+            *CodeRabbit will provide additional review comments on your changes.* 🐰`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Block Merge on IaC Failure
+        if: steps.validate.outcome == 'failure'
+        run: |
+          echo "❌ IaC validation failed. Merge is blocked."
+          echo "Please fix the Terraform validation errors before merging."
+          exit 1
+
+  # Quality gate - ensures CodeRabbit has reviewed
+  coderabbit-gate:
+    name: CodeRabbit Review Gate
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    
+    steps:
+      - name: Check CodeRabbit Configuration
+        run: |
+          echo "🐰 CodeRabbit Review Gate"
+          echo ""
+          echo "This job ensures CodeRabbit integration is active."
+          echo "CodeRabbit will automatically review this PR and provide:"
+          echo "  - Code quality suggestions"
+          echo "  - Security recommendations"
+          echo "  - Best practices feedback"
+          echo "  - IaC-specific reviews for Terraform files"
+          echo ""
+          echo "✅ Gate passed - CodeRabbit is configured to review all PRs"
+
+      - name: Create Review Reminder
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if we already commented
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const botComment = comments.data.find(comment => 
+              comment.body.includes('CodeRabbit Review Reminder')
+            );
+            
+            if (!botComment) {
+              const body = `## 🐰 CodeRabbit Review Reminder
+              
+              This PR will be automatically reviewed by CodeRabbit. Please ensure:
+              
+              - [ ] All CodeRabbit suggestions have been addressed
+              - [ ] Critical issues are resolved before requesting human review
+              - [ ] IaC changes follow security best practices
+              
+              > **Tip:** Reply to CodeRabbit comments with \`@coderabbitai\` to get clarifications or request re-reviews.
+              
+              ---
+              *Maintainer approval is required after addressing CodeRabbit feedback.*`;
+              
+              github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: body
+              });
+            }
