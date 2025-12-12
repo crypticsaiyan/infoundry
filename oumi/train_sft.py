@@ -15,7 +15,14 @@ from oumi.core.configs.params.peft_params import PeftParams
 
 
 def run_training():
-    """Run SFT training on architecture data using Oumi."""
+    """
+    Run SFT training on architecture recommendation data using Oumi.
+    
+    Checks for the presence of generated_training_data.jsonl, builds a TrainingConfig with model, training, data, and LoRA (PEFT) settings, and runs training when the data file exists. If the data file is missing the function prints an error and returns without running training.
+    
+    Returns:
+        The object returned by train(config) when training runs, or `None` if training did not start because the data file was missing.
+    """
     
     # Check that training data exists
     data_file = Path("generated_training_data.jsonl")
@@ -88,4 +95,3 @@ def run_training():
 
 if __name__ == "__main__":
     run_training()
-

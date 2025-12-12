@@ -37,7 +37,16 @@ USE_OLLAMA = os.environ.get("USE_OLLAMA", "true").lower() == "true"
 
 
 def call_ollama(prompt: str, model: str = "codellama") -> Optional[str]:
-    """Call Ollama API."""
+    """
+    Request a text completion from the configured Ollama server.
+    
+    Parameters:
+        prompt (str): The prompt to send to Ollama.
+        model (str): The Ollama model name to use (defaults to "codellama").
+    
+    Returns:
+        response (str) if Ollama returned a response, `None` if the request failed or no response was available.
+    """
     try:
         payload = {
             "model": model,
@@ -58,7 +67,18 @@ def call_ollama(prompt: str, model: str = "codellama") -> Optional[str]:
 
 
 def heuristic_response(prompt: str) -> dict:
-    """Fallback heuristic."""
+    """
+    Generate a heuristic architecture recommendation based on a text prompt.
+    
+    Parameters:
+        prompt (str): Natural-language description of application requirements or constraints used to infer an architecture pattern.
+    
+    Returns:
+        dict: A dictionary with the following keys:
+            - pattern (str): The selected deployment pattern name (e.g., "event_driven", "kubernetes", "serverless", "microservices_ecs").
+            - components (list[str]): A unique list of suggested infrastructure components.
+            - rationale (str): A short explanation of why the pattern was selected.
+    """
     prompt_lower = prompt.lower()
     
     # Simple pattern matching
@@ -87,7 +107,20 @@ def heuristic_response(prompt: str) -> dict:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: CompletionRequest):
-    """OpenAI-compatible endpoint."""
+    """
+    Serve an OpenAI-compatible chat completions endpoint that produces a JSON architectural recommendation.
+    
+    Extracts the prompt from the last message in `request.messages` or from `request.prompt`; if neither is provided, raises an HTTPException with status 400. Prepends a system instruction requiring a JSON object with keys `pattern`, `components`, and `rationale`. Attempts to obtain a model-generated response via Ollama when enabled; if that fails or returns no result, falls back to a heuristic response. Returns the result wrapped in an OpenAI-like response object.
+    
+    Parameters:
+        request (CompletionRequest): Input payload containing either `messages` (uses the last message's content), or `prompt`; may include `model` to select the model used when calling Ollama.
+    
+    Returns:
+        dict: OpenAI-style response with an `"id"` of `"cmpl-infoundry"` and a single choice whose `message` (role `"assistant"`) `content` is the JSON recommendation and whose `finish_reason` is `"stop"`.
+    
+    Raises:
+        HTTPException: Raised with status 400 when no prompt is provided in the request.
+    """
     if request.messages:
         prompt = request.messages[-1].content
     elif request.prompt:
@@ -123,7 +156,19 @@ JSON Response:"""
 
 @app.post("/v1/completions")
 async def completions(request: CompletionRequest):
-    """Legacy completions endpoint."""
+    """
+    Handle legacy completions requests and produce a single text choice.
+    
+    Uses the configured Ollama service to generate text for the provided prompt; if Ollama is disabled or returns no result, falls back to a heuristic-derived response.
+    
+    Parameters:
+        request (CompletionRequest): Request object containing at least `prompt` (string) and optional `model`.
+    
+    Returns:
+        dict: A response object with a `choices` list containing a single item with keys:
+            - `text`: the generated response string (JSON-serialized when from the heuristic fallback)
+            - `finish_reason`: the string "stop"
+    """
     prompt = request.prompt or ""
     
     response = None
@@ -141,6 +186,17 @@ async def completions(request: CompletionRequest):
 @app.get("/health")
 async def health():
     # Check if Ollama is available
+    """
+    Return overall service health and whether the configured Ollama service is reachable.
+    
+    Performs a quick availability probe of the configured Ollama URL and reports the result.
+    
+    Returns:
+        dict: A mapping with keys:
+            - "status": the service health string ("healthy").
+            - "ollama_available": `True` if Ollama responded to the probe, `False` otherwise.
+            - "ollama_url": the configured Ollama base URL.
+    """
     ollama_ok = False
     try:
         req = urllib.request.Request(f"{OLLAMA_URL}/api/tags")

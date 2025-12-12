@@ -81,7 +81,27 @@ QUEUES = [None, "sqs", "rabbitmq", "kafka", "redis"]
 def determine_pattern(services: List[str], db: str, app_type: str, 
                      queue: str = None, gpu: bool = False, 
                      scheduled: bool = False) -> str:
-    """Determine the best architecture pattern based on requirements."""
+    """
+                     Selects an architecture pattern string that fits the provided deployment requirements.
+                     
+                     Determines the most appropriate pattern from common architecture choices:
+                     - Returns "kubernetes" for GPU workloads or large (5+) service counts.
+                     - Returns "event_driven" when the queue is "kafka".
+                     - Returns "serverless" for single-service cases (including scheduled single jobs or when using DynamoDB).
+                     - Returns "microservices_ecs" for 2–4 services.
+                     - Returns "lift_and_shift" for a single legacy or enterprise application.
+                     
+                     Parameters:
+                         services (List[str]): List of service roles/components included in the application.
+                         db (str): Primary database choice (e.g., "dynamodb", "postgres").
+                         app_type (str): Application domain/type (e.g., "enterprise", "legacy", "web").
+                         queue (str, optional): Queue system name if used (e.g., "kafka"); defaults to None.
+                         gpu (bool, optional): True if the workload requires GPU resources; defaults to False.
+                         scheduled (bool, optional): True if the workload is a scheduled/background job; defaults to False.
+                     
+                     Returns:
+                         str: One of "kubernetes", "event_driven", "serverless", "microservices_ecs", or "lift_and_shift" indicating the chosen architecture pattern.
+                     """
     num_services = len(services)
     
     # GPU workloads need Kubernetes
@@ -120,7 +140,17 @@ def determine_pattern(services: List[str], db: str, app_type: str,
 
 
 def generate_components(pattern: str, db: str, queue: str = None) -> List[str]:
-    """Generate AWS components for the architecture."""
+    """
+    Produce component identifiers for a given architecture pattern, adjusted for the specified database and optional queue.
+    
+    Parameters:
+        pattern (str): Key name of the architecture pattern (must exist in PATTERNS).
+        db (str): Selected database type (used to include a matching database component).
+        queue (str, optional): Selected queue system; when provided, a corresponding queue component is included.
+    
+    Returns:
+        components (List[str]): List of unique component identifiers to include for the architecture.
+    """
     base_components = PATTERNS[pattern]["components"].copy()
     
     # Add database-specific components
@@ -155,7 +185,19 @@ def generate_components(pattern: str, db: str, queue: str = None) -> List[str]:
 
 def generate_rationale(pattern: str, services: List[str], db: str, 
                        queue: str = None, gpu: bool = False) -> str:
-    """Generate a rationale for the architecture decision."""
+    """
+                       Selects a concise rationale explaining why a particular architecture pattern was chosen.
+                       
+                       Parameters:
+                           pattern (str): Architecture pattern name (e.g., "serverless", "microservices_ecs", "kubernetes", "event_driven", "lift_and_shift").
+                           services (List[str]): List of service roles or components used to tailor the rationale (affects wording such as service count).
+                           db (str): Database choice to include in the rationale when relevant.
+                           queue (str, optional): Queue or streaming system to mention in event-driven rationales.
+                           gpu (bool, optional): Whether GPU requirements should influence the rationale.
+                       
+                       Returns:
+                           str: A single-sentence rationale chosen from candidate messages for the given pattern; returns a generic rationale if the pattern is not recognized.
+                       """
     num_services = len(services)
     
     rationales = {
@@ -194,7 +236,17 @@ def generate_rationale(pattern: str, services: List[str], db: str,
 
 
 def generate_example() -> Dict[str, Any]:
-    """Generate a single training example matching sample_architecture_plan.json format."""
+    """
+    Generate a single synthetic training example in the chat-based format that conforms to the sample_architecture_plan.json schema.
+    
+    The returned example contains a "messages" list with three entries:
+    - system: an instruction enforcing an exact JSON schema for the response,
+    - user: a concise scenario describing services, language, database, cloud, optional queue/GPU/schedule, latency, and cost,
+    - assistant: a JSON string containing the recommended architecture, inputs metadata, and source.
+    
+    Returns:
+        example (Dict[str, Any]): A dictionary with a "messages" key whose value is a list of three message objects (system, user, assistant). The assistant message content is a JSON string with the keys "architecture", "inputs", and "source".
+    """
     # Random selections
     services = random.choice(SERVICE_TYPES)
     db = random.choice(DATABASES)
@@ -313,7 +365,17 @@ Do NOT include any text outside the JSON. Components must be strings, not object
 
 
 def generate_dpo_example() -> Dict[str, Any]:
-    """Generate a DPO (preference) training example."""
+    """
+    Create a DPO-style preference training example containing a prompt, a preferred solution, and a rejected alternative.
+    
+    The generated example simulates a human prompt describing services and constraints and two JSON-serialized responses: a chosen (correct) architecture and a rejected (suboptimal) alternative.
+    
+    Returns:
+        example (Dict[str, Any]): A dictionary with:
+            - "prompt" (str): A short human-facing prompt describing services, database, optional queue, and optional GPU requirement.
+            - "chosen" (str): A JSON string with keys "pattern", "components", and "rationale" representing the recommended architecture.
+            - "rejected" (str): A JSON string with keys "pattern", "components", and "rationale" representing a deliberately suboptimal alternative.
+    """
     # Generate a regular example first
     services = random.choice(SERVICE_TYPES)
     db = random.choice(DATABASES)
@@ -365,6 +427,20 @@ def generate_dpo_example() -> Dict[str, Any]:
 
 
 def main():
+    """
+    Generate synthetic SFT training examples and optional DPO preference examples, write them as newline-delimited JSON objects to disk, and print a summary and a sample example to stdout.
+    
+    Parses command-line arguments:
+        --count: number of examples to generate.
+        --output: file path for SFT JSONL output.
+        --dpo: when present, also generate DPO preference data.
+        --dpo-output: file path for DPO JSONL output.
+    
+    Side effects:
+        - Writes SFT examples to the specified output file in JSON Lines format.
+        - If --dpo is set, writes DPO examples to the specified DPO output file in JSON Lines format.
+        - Prints progress, saved file paths, and a sample training example to stdout.
+    """
     parser = argparse.ArgumentParser(description="Generate Oumi training data")
     parser.add_argument("--count", type=int, default=50, 
                         help="Number of training examples to generate")

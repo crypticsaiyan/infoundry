@@ -34,7 +34,23 @@ SCENARIOS = [
 
 
 def create_prompt(scenario: Dict) -> str:
-    """Create a prompt from a scenario."""
+    """
+    Builds a text prompt instructing an expert cloud architect to produce a JSON-formatted architecture recommendation for the given scenario.
+    
+    Parameters:
+        scenario (Dict): Scenario specification with required keys:
+            - "services" (int): number of microservices
+            - "db" (str): database choice
+            - "type" (str): application type
+            - "cloud" (str): cloud provider
+          Optional keys:
+            - "scheduled" (bool): whether a scheduled/cron job is required
+            - "gpu" (bool): whether GPU resources are required
+            - "queue" (str): message queue type
+    
+    Returns:
+        str: A single string prompt that includes the scenario details and an explicit instruction to respond with a JSON object in the required schema.
+    """
     parts = [
         f"Services: {scenario['services']} microservices",
         f"Database: {scenario['db']}",
@@ -78,7 +94,21 @@ Architecture recommendation (JSON only):"""
 def generate_with_oumi(model_name: str = "Qwen/Qwen2.5-0.5B-Instruct", 
                        use_trained: bool = False,
                        num_examples: int = 50) -> List[Dict]:
-    """Generate synthetic data using Oumi inference."""
+    """
+                       Generate a set of synthetic chat-style training examples by prompting Oumi and collecting its JSON-formatted architecture recommendations.
+                       
+                       This function configures an Oumi inference model (optionally with a trained adapter), repeatedly selects and slightly randomizes seed scenarios, builds prompts, calls Oumi to generate an assistant response, and wraps each result into a chat-style example containing system/user/assistant messages plus the scenario under `metadata`. Failures for individual examples are caught and do not stop the overall run.
+                       
+                       Parameters:
+                           model_name (str): Base model identifier used for inference.
+                           use_trained (bool): If True, attach a local trained adapter at "./trained_model" to the base model.
+                           num_examples (int): Number of synthetic examples to generate.
+                       
+                       Returns:
+                           List[Dict]: A list of examples where each example is a dict with keys:
+                               - "messages": List of message dicts with roles ("system", "user", "assistant") and corresponding content.
+                               - "metadata": The scenario dictionary used to generate the prompt for that example.
+                       """
     
     # Configure the model
     config = InferenceConfig(
@@ -163,6 +193,11 @@ def generate_with_oumi(model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
 
 
 def main():
+    """
+    Run the CLI to generate synthetic training examples with Oumi and save them as a JSONL file.
+    
+    Parses command-line arguments (--count, --output, --use-trained, --model), invokes generate_with_oumi with those options to produce the requested number of examples, and writes each example as a separate JSON object line to the specified output file.
+    """
     import argparse
     
     parser = argparse.ArgumentParser(description="Generate synthetic training data with Oumi")
