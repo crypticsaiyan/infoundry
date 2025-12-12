@@ -34,7 +34,7 @@ python serve.py
 
 ## Files
 
-- `training_data.jsonl` - Example architecture decisions for training
+- `generated_training_data.jsonl` - Example architecture decisions for training
 - `train.py` - Training script
 - `serve.py` - FastAPI server for the trained model
 - `requirements.txt` - Python dependencies
