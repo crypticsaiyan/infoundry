@@ -1,0 +1,79 @@
+# Oumi Synthesis Config for InFoundry Architect
+# Generates architecture recommendation training data
+
+output_path: ./synth_training_data.jsonl
+num_samples: 50
+strategy: GENERAL
+
+strategy_params:
+  sampled_attributes:
+    - id: service_count
+      name: "Service Count"
+      description: "Number of microservices in the architecture"
+      possible_values:
+        - id: "1"
+          name: "1"
+          description: "Single service - best for serverless"
+        - id: "2"
+          name: "2"
+          description: "Two services - good for ECS"
+        - id: "3"
+          name: "3"
+          description: "Three services - microservices"
+        - id: "5"
+          name: "5"
+          description: "Five services - kubernetes"
+        - id: "8"
+          name: "8"
+          description: "Eight services - large kubernetes"
+
+    - id: database
+      name: "Database"
+      description: "Primary database technology"
+      possible_values:
+        - id: postgres
+          name: "postgres"
+          description: "PostgreSQL relational database"
+        - id: dynamodb
+          name: "dynamodb"
+          description: "AWS DynamoDB NoSQL"
+        - id: mongodb
+          name: "mongodb"
+          description: "MongoDB NoSQL document store"
+        - id: redis
+          name: "redis"
+          description: "Redis in-memory data store"
+
+    - id: cloud
+      name: "Cloud Provider"
+      description: "Cloud platform to deploy on"
+      possible_values:
+        - id: aws
+          name: "aws"
+          description: "Amazon Web Services"
+        - id: gcp
+          name: "gcp"
+          description: "Google Cloud Platform"
+        - id: azure
+          name: "azure"
+          description: "Microsoft Azure"
+
+  generated_attributes:
+    - id: architecture
+      generation_config:
+        conversation:
+          messages:
+            - role: SYSTEM
+              content: |
+                You are an expert cloud architect. Recommend optimal architecture.
+                Respond with JSON: {"architecture": {"pattern": "serverless|microservices_ecs|kubernetes", "components": ["list"], "scaling_strategy": "horizontal|serverless", "estimated_cost_tier": "low|medium|high", "rationale": "explanation"}, "inputs": {"service_count": N, "cloud_provider": "aws"}, "source": "ai_recommendation"}
+            - role: USER
+              content: "Services: {service_count}, DB: {database}, Cloud: {cloud}"
+
+inference_config:
+  model:
+    model_name: "Qwen/Qwen2.5-0.5B-Instruct"
+    trust_remote_code: true
+  generation:
+    max_new_tokens: 512
+    temperature: 0.7
