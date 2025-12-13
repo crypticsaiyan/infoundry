@@ -12,6 +12,7 @@ inputs:
   - id: repository
     type: STRING
     required: true
+    defaults: "crypticsaiyan/infotest"
     description: GitHub repository (owner/repo format)
 
 tasks:
@@ -28,7 +29,7 @@ tasks:
       - id: validate
         type: io.kestra.plugin.scripts.python.Script
         env:
-          GITHUB_TOKEN: "{{ secret('GITHUB_TOKEN') }}"
+          GITHUB_TOKEN: "{{ kv('GITHUB_TOKEN') }}"
           REPOSITORY: "{{ inputs.repository }}"
         script: |
           import json
@@ -36,15 +37,15 @@ tasks:
           import time
           import urllib.request
           import urllib.error
-          
+
           github_token = os.environ.get("GITHUB_TOKEN", "")
           repository = os.environ.get("REPOSITORY", "")
-          
+
           with open("pr_result.json") as f:
               pr_result = json.load(f)
-          
+
           pr_number = pr_result.get("pr_number")
-          
+
           result = {
               "pr_number": pr_number,
               "repository": repository,
@@ -53,7 +54,7 @@ tasks:
               "status": "pending",
               "passed": False
           }
-          
+
           if not pr_number:
               result["status"] = "skipped"
               result["message"] = "No PR number provided"
@@ -106,7 +107,7 @@ tasks:
                       {"user": r.get("user", {}).get("login"), "state": r.get("state")}
                       for r in reviews
                   ]
-          
+
           with open("validation_result.json", "w") as f:
               json.dump(result, f, indent=2)
           print(json.dumps(result, indent=2))
