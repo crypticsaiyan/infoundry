@@ -1,5 +1,5 @@
 {
-  "name": "cloudgenesis-ui",
+  "name": "infoundry-ui",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,16 +9,17 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "next": "14.2.5",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "@xyflow/react": "^12.3.5",
+    "lucide-react": "^0.460.0",
+    "next": "^15.5.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/node": "25.0.0",
+    "@types/node": "25.0.1",
     "@types/react": "19.2.7",
-    "@types/react-dom": "^18.2.22",
-    "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.5",
-    "typescript": "^5.4.5"
+    "eslint": "^8",
+    "eslint-config-next": "15.0.3",
+    "typescript": "5.9.3"
   }
 }
