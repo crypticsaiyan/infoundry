@@ -16,10 +16,10 @@ tasks:
       import json
       import os
       from datetime import datetime
-      
+
       services_input = os.environ.get("SERVICES", "backend,frontend")
       services = [s.strip() for s in services_input.split(",")]
-      
+
       # Mock metrics data
       MOCK_DATA = {
           "backend": {"latencies": [120, 140, 200, 450, 500], "errors": [0, 0, 0, 1, 0], "cost": 60},
@@ -28,7 +28,7 @@ tasks:
           "payments": {"latencies": [90, 110, 130, 150, 170], "errors": [0, 0, 0, 0, 1], "cost": 35},
       }
       DEFAULT = {"latencies": [100, 120, 140, 160, 180], "errors": [0, 0, 0, 0, 0], "cost": 25}
-      
+
       def summarize(metrics):
           lats = sorted(metrics.get("latencies", []))
           errs = metrics.get("errors", [])
@@ -48,18 +48,18 @@ tasks:
               "error_rate": sum(errs) / max(len(errs), 1),
               "cost": metrics.get("cost", 0)
           }
-      
+
       summary = {}
       for svc in services:
           raw = MOCK_DATA.get(svc, DEFAULT)
           summary[svc] = summarize(raw)
-      
+
       output = {
           "summary": summary,
           "collected_at": datetime.utcnow().isoformat(),
           "source": "mock"
       }
-      
+
       with open("telemetry_summary.json", "w") as f:
           json.dump(output, f, indent=2)
       print(json.dumps(output, indent=2))
