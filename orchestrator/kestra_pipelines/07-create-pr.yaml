@@ -12,12 +12,19 @@ inputs:
   - id: repository
     type: STRING
     required: true
+    defaults: "crypticsaiyan/infotest"
     description: GitHub repository (owner/repo format)
 
   - id: base_branch
     type: STRING
     required: false
     description: Base branch for PR (defaults to main)
+
+  - id: target_folder
+    type: STRING
+    required: false
+    defaults: "infra"
+    description: Target folder in repo for Terraform files
 
 tasks:
   - id: working_dir
@@ -33,9 +40,10 @@ tasks:
       - id: create_pr
         type: io.kestra.plugin.scripts.python.Script
         env:
-          GITHUB_TOKEN: "{{ secret('GITHUB_TOKEN') }}"
+          GITHUB_TOKEN: "{{ kv('GITHUB_TOKEN') }}"
           REPOSITORY: "{{ inputs.repository }}"
           BASE_BRANCH: "{{ inputs.base_branch ?? 'main' }}"
+          TARGET_FOLDER: "{{ inputs.target_folder ?? 'infra' }}"
         script: |
           import json
           import os
@@ -43,21 +51,22 @@ tasks:
           import urllib.request
           import urllib.error
           from datetime import datetime
-          
+
           github_token = os.environ.get("GITHUB_TOKEN", "")
           repository = os.environ.get("REPOSITORY", "")
           base_branch = os.environ.get("BASE_BRANCH", "main")
-          
+          target_folder = os.environ.get("TARGET_FOLDER", "infra")
+
           timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
           branch_name = f"infoundry/iac-{timestamp}"
-          
+
           # Extract IaC files
           with zipfile.ZipFile("iac.zip", "r") as zf:
               zf.extractall("iac_files")
-          
+
           files = list(os.listdir("iac_files"))
           print(f"Extracted files: {files}")
-          
+
           def github_api(method, endpoint, data=None):
               url = f"https://api.github.com/repos/{repository}{endpoint}"
               headers = {
@@ -74,7 +83,7 @@ tasks:
               except urllib.error.HTTPError as e:
                   print(f"GitHub API error: {e.code} {e.read().decode()}")
                   return None
-          
+
           result = {
               "repository": repository,
               "branch": branch_name,
@@ -84,7 +93,7 @@ tasks:
               "pr_number": None,
               "status": "pending"
           }
-          
+
           if not github_token:
               print("No GITHUB_TOKEN configured - skipping PR creation")
               result["status"] = "skipped"
@@ -112,7 +121,7 @@ tasks:
                               "content": base64.b64encode(content.encode()).decode(),
                               "branch": branch_name
                           }
-                          github_api("PUT", f"/contents/infra/{filename}", file_data)
+                          github_api("PUT", f"/contents/{target_folder}/{filename}", file_data)
                       
                       # Create PR
                       pr_data = {
@@ -137,7 +146,7 @@ tasks:
               else:
                   result["status"] = "failed"
                   result["message"] = "Failed to get base branch"
-          
+
           with open("pr_result.json", "w") as f:
               json.dump(result, f, indent=2)
           print(json.dumps(result, indent=2))

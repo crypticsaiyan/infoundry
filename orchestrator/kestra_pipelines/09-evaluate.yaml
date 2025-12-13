@@ -1,13 +1,15 @@
 id: evaluate
 namespace: infoundry
 
-description: Computes reward score based on deployment results
+description: |
+  Evaluates IaC deployment results using Kestra AI Agent.
+  Provides intelligent feedback and recommendations.
 
 inputs:
   - id: deploy_result
     type: FILE
     required: true
-    description: Deploy result JSON from test-deploy flow
+    description: Deploy result JSON from validate-iac flow
 
   - id: architecture_plan
     type: FILE
@@ -15,6 +17,28 @@ inputs:
     description: Architecture plan for evaluation context
 
 tasks:
+  # Kestra AI Agent for intelligent evaluation
+  - id: ai_evaluate
+    type: io.kestra.plugin.ai.agent.AIAgent
+    allowFailure: true
+    provider:
+      type: io.kestra.plugin.ai.provider.OpenAI
+      baseUrl: "http://172.17.0.1:11434/v1"
+      apiKey: "ollama"
+      modelName: qwen2.5:7b
+    systemMessage: |
+      You are a cloud infrastructure quality evaluator. Analyze Terraform 
+      validation results and provide actionable feedback.
+
+      Return ONLY valid JSON with these fields:
+      - score: number from 0.0 to 1.0
+      - recommendation: "proceed", "review", or "reject"
+      - feedback: brief 1-2 sentence explanation
+      - improvements: list of 2-3 suggested improvements
+    prompt: |
+      Evaluate this Terraform validation result and provide quality assessment:
+      {{ read(inputs.deploy_result) }}
+
   - id: working_dir
     type: io.kestra.plugin.core.flow.WorkingDirectory
     outputFiles:
@@ -25,45 +49,83 @@ tasks:
         inputs:
           deploy_result.json: "{{ inputs.deploy_result }}"
 
-      - id: evaluate
+      - id: write_ai_output
+        type: io.kestra.plugin.scripts.shell.Script
+        env:
+          AI_EVALUATION: "{{ outputs.ai_evaluate.textOutput ?? '{}' }}"
+        script: |
+          echo "$AI_EVALUATION" > ai_evaluation_input.json
+          echo "=== AI EVALUATION ==="
+          cat ai_evaluation_input.json
+
+      - id: process_evaluation
         type: io.kestra.plugin.scripts.python.Script
         script: |
           import json
           from datetime import datetime
-          
+
+          # Load deployment result
           with open("deploy_result.json") as f:
               deploy = json.load(f)
-          
-          # Compute reward components
-          deploy_success = 1.0 if deploy.get("success") else 0.0
-          
-          smoke = deploy.get("smoke_tests", {})
-          total_tests = smoke.get("passed", 0) + smoke.get("failed", 0)
-          test_score = smoke.get("passed", 0) / max(total_tests, 1)
-          
-          # Bonus for clean deployment
-          status = deploy.get("deploy_status", "")
-          status_bonus = 0.1 if status == "success" else 0.0
-          
-          # Compute final reward (0.0 to 1.0)
-          reward = (deploy_success * 0.5) + (test_score * 0.4) + status_bonus
-          
+
+          # Try to load AI evaluation
+          ai_eval = {}
+          use_heuristic = False
+
+          try:
+              with open("ai_evaluation_input.json") as f:
+                  content = f.read().strip()
+                  # Strip markdown fences if present
+                  if content.startswith("```"):
+                      lines = content.split("\n")
+                      lines = [l for l in lines if not l.strip().startswith("```")]
+                      content = "\n".join(lines)
+                  if content and content != "{}":
+                      ai_eval = json.loads(content)
+                      print("=== KESTRA AI EVALUATION ===")
+                      print("Score:", ai_eval.get("score", "N/A"))
+                      print("Recommendation:", ai_eval.get("recommendation", "N/A"))
+          except (FileNotFoundError, json.JSONDecodeError) as e:
+              print("AI evaluation not available, using heuristics:", e)
+              use_heuristic = True
+
+          # Fallback to heuristic scoring if AI unavailable
+          if not ai_eval.get("score"):
+              use_heuristic = True
+              smoke = deploy.get("smoke_tests", {})
+              total_tests = smoke.get("passed", 0) + smoke.get("failed", 0)
+              test_score = smoke.get("passed", 0) / max(total_tests, 1)
+              deploy_success = 1.0 if deploy.get("success") else 0.0
+              score = (deploy_success * 0.5) + (test_score * 0.4) + (0.1 if deploy.get("deploy_status") == "validated" else 0)
+              
+              if score > 0.7:
+                  recommendation = "proceed"
+              elif score > 0.4:
+                  recommendation = "review"
+              else:
+                  recommendation = "reject"
+              
+              ai_eval = {
+                  "score": round(score, 3),
+                  "recommendation": recommendation,
+                  "feedback": "Heuristic evaluation based on test results",
+                  "improvements": ["Consider adding more validation checks"]
+              }
+
           result = {
-              "reward": round(reward, 3),
-              "components": {
-                  "deploy_success": deploy_success,
-                  "test_score": round(test_score, 3),
-                  "status_bonus": status_bonus
-              },
+              "source": "heuristic" if use_heuristic else "kestra-ai-agent",
+              "score": ai_eval.get("score", 0),
+              "recommendation": ai_eval.get("recommendation", "review"),
+              "feedback": ai_eval.get("feedback", ""),
+              "improvements": ai_eval.get("improvements", []),
               "metrics": {
-                  "tests_passed": smoke.get("passed", 0),
-                  "tests_failed": smoke.get("failed", 0),
-                  "deploy_status": status
+                  "tests_passed": deploy.get("smoke_tests", {}).get("passed", 0),
+                  "tests_failed": deploy.get("smoke_tests", {}).get("failed", 0),
+                  "deploy_status": deploy.get("deploy_status", "unknown")
               },
-              "evaluated_at": datetime.utcnow().isoformat(),
-              "recommendation": "proceed" if reward > 0.7 else "review" if reward > 0.4 else "reject"
+              "evaluated_at": datetime.utcnow().isoformat()
           }
-          
+
           with open("evaluation_result.json", "w") as f:
               json.dump(result, f, indent=2)
           print(json.dumps(result, indent=2))

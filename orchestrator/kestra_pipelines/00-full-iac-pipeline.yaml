@@ -1,0 +1,109 @@
+id: full-iac-pipeline
+namespace: infoundry
+
+description: |
+  Complete IaC generation pipeline with validation before PR creation.
+  Flow: generate-iac → validate → create-pr (if validation passes)
+
+inputs:
+  - id: graph
+    type: FILE
+    required: true
+    description: Graph JSON from render-graph flow
+
+  - id: cloud_provider
+    type: STRING
+    required: true
+    defaults: "aws"
+    description: Target cloud provider
+
+  - id: project_name
+    type: STRING
+    required: true
+    defaults: "infoundry"
+    description: Project name for resource naming
+
+  - id: repository
+    type: STRING
+    required: true
+    defaults: "crypticsaiyan/infotest"
+    description: GitHub repository for PR
+
+  - id: target_folder
+    type: STRING
+    required: false
+    defaults: "infra"
+    description: Target folder in repo for Terraform files
+
+tasks:
+  # Step 1: Generate Terraform IaC
+  - id: generate_iac
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: generate-iac
+    namespace: infoundry
+    inputs:
+      graph: "{{ inputs.graph }}"
+      cloud_provider: "{{ inputs.cloud_provider }}"
+      project_name: "{{ inputs.project_name }}"
+    wait: true
+
+  # Step 2: Validate the generated Terraform
+  - id: validate_iac
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: validate-iac
+    namespace: infoundry
+    inputs:
+      iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+    wait: true
+
+  # Step 3: Create PR only if validation passed
+  - id: create_pr
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: create-pr
+    namespace: infoundry
+    runIf: '{{ outputs.validate_iac.outputs.deploy_result contains ''"success": true'' }}'
+    inputs:
+      iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+      repository: "{{ inputs.repository }}"
+      target_folder: "{{ inputs.target_folder }}"
+    wait: true
+
+  # Step 4: Log the result
+  - id: log_result
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+
+      validation_passed = {{ outputs.validate_iac.outputs.deploy_result contains '"success": true' }}
+
+      if validation_passed:
+          print("✅ Pipeline completed successfully!")
+          print("   - IaC generated")
+          print("   - Terraform validated")
+          print("   - PR created")
+      else:
+          print("❌ Pipeline stopped: Terraform validation failed")
+          print("   - IaC generated")
+          print("   - Terraform validation FAILED")
+          print("   - PR NOT created (validation must pass first)")
+
+outputs:
+  - id: iac_bundle
+    type: FILE
+    value: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+    description: Generated IaC bundle
+
+  - id: iac_manifest
+    type: FILE
+    value: "{{ outputs.generate_iac.outputs.iac_manifest }}"
+    description: IaC manifest with AI decisions
+
+  - id: validation_result
+    type: FILE
+    value: "{{ outputs.validate_iac.outputs.deploy_result }}"
+    description: Terraform validation result
+
+  - id: pr_result
+    type: FILE
+    value: "{{ outputs.create_pr.outputs.pr_result ?? null }}"
+    description: PR creation result (null if validation failed)
