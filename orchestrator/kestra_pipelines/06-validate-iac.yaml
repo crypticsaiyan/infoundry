@@ -28,7 +28,7 @@ tasks:
         beforeCommands:
           - apk add --no-cache python3
         env:
-          ENVIRONMENT: "{{ inputs.environment ?? 'localstack' }}"
+          ENVIRONMENT: "localstack"
           # AWS credentials are optional - set in Kestra KV store if you want terraform plan to work
           # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
         script: |

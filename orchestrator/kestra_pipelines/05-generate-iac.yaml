@@ -339,20 +339,45 @@ tasks:
           }
 
           variable "db_username" {
-            description = "Database username"
+            description = "Database username (set via TF_VAR_db_username or terraform.tfvars)"
             type        = string
             sensitive   = true
-            default     = "admin"
+            default     = null
           }
 
           variable "db_password" {
-            description = "Database password"
+            description = "Database password (auto-generated if not provided)"
             type        = string
             sensitive   = true
-            default     = "changeme123!"
+            default     = null
+          }
+          '''
+
+          # Add random password resource for secure credential generation
+          random_tf = '''
+          # Generate secure random password if not provided
+          resource "random_password" "db_password" {
+            count            = var.db_password == null ? 1 : 0
+            length           = 24
+            special          = true
+            override_special = "!#$%&*()-_=+[]{}<>:?"
+          }
+
+          # Generate random username if not provided
+          resource "random_pet" "db_username" {
+            count     = var.db_username == null ? 1 : 0
+            length    = 2
+            separator = "_"
+          }
+
+          # Local values for actual credentials
+          locals {
+            db_username = var.db_username != null ? var.db_username : random_pet.db_username[0].id
+            db_password = var.db_password != null ? var.db_password : random_password.db_password[0].result
           }
           '''
           (output_dir / "variables.tf").write_text(variables_tf)
+          (output_dir / "random.tf").write_text(random_tf)
 
           # Resource templates (using string concatenation to avoid Pebble conflicts)
           TEMPLATES = {}
@@ -464,8 +489,8 @@ tasks:
             storage_type          = "gp3"
             storage_encrypted     = ''' + encryption_str + '''
             db_name  = replace(var.project_name, "-", "_")
-            username = var.db_username
-            password = var.db_password
+            username = local.db_username
+            password = local.db_password
             vpc_security_group_ids = [aws_security_group.rds_sg.id]
             db_subnet_group_name   = aws_db_subnet_group.main.name
             multi_az                = ''' + multi_az_str + '''
