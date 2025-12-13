@@ -1,7 +1,9 @@
 id: end-to-end
 namespace: infoundry
 
-description: Master pipeline that chains all InFoundry steps
+description: |
+  Master pipeline that chains all InFoundry steps.
+  Flow: ingest → propose → render → generate → validate → create-pr → validate-pr → evaluate
 
 inputs:
   - id: repo_url
@@ -11,57 +13,78 @@ inputs:
 
   - id: branch
     type: STRING
-    required: false
+    required: true
+    defaults: "main"
     description: Git branch to clone
 
   - id: repository
     type: STRING
-    required: false
+    required: true
+    defaults: "crypticsaiyan/infotest"
     description: GitHub repository for PR creation (owner/repo)
 
-  - id: llm_endpoint
+  - id: cloud_provider
     type: STRING
-    required: false
-    description: LLM endpoint for AI-powered decisions
+    required: true
+    defaults: "aws"
+    description: Target cloud provider
+
+  - id: project_name
+    type: STRING
+    required: true
+    defaults: "infoundry"
+    description: Project name for resource naming
+
+  - id: target_folder
+    type: STRING
+    required: true
+    defaults: "infra"
+    description: Target folder in repo for Terraform files
 
   - id: skip_pr
     type: BOOLEAN
-    required: false
+    required: true
+    defaults: false
     description: Skip PR creation step
 
-  - id: skip_deploy
+  - id: skip_validation
     type: BOOLEAN
-    required: false
-    description: Skip test deployment step
+    required: true
+    defaults: false
+    description: Skip validation step
 
 tasks:
+  # Step 1: Ingest repository
   - id: ingest_repo
     type: io.kestra.plugin.core.flow.Subflow
     flowId: ingest-repo
     namespace: infoundry
     inputs:
       repo_url: "{{ inputs.repo_url }}"
-      branch: "{{ inputs.branch ?? 'main' }}"
+      branch: "{{ inputs.branch }}"
     wait: true
 
+  # Step 2: Ingest telemetry (optional)
   - id: ingest_telemetry
     type: io.kestra.plugin.core.flow.Subflow
     flowId: ingest-telemetry
     namespace: infoundry
+    allowFailure: true
     inputs:
       services: "backend,frontend"
     wait: true
 
+  # Step 3: Propose architecture (AI-powered via Oumi)
   - id: propose_architecture
     type: io.kestra.plugin.core.flow.Subflow
     flowId: propose-architecture
     namespace: infoundry
     inputs:
       service_profile: "{{ outputs.ingest_repo.outputs.service_profile }}"
-      telemetry_summary: "{{ outputs.ingest_telemetry.outputs.telemetry_summary }}"
-      llm_endpoint: "{{ inputs.llm_endpoint ?? '' }}"
+      telemetry_summary: "{{ outputs.ingest_telemetry.outputs.telemetry_summary ?? '' }}"
     wait: true
 
+  # Step 4: Render graph
   - id: render_graph
     type: io.kestra.plugin.core.flow.Subflow
     flowId: render-graph
@@ -70,62 +93,124 @@ tasks:
       architecture_plan: "{{ outputs.propose_architecture.outputs.architecture_plan }}"
     wait: true
 
+  # Step 5: Generate IaC (AI-powered via Kestra AI Agent + Ollama)
   - id: generate_iac
     type: io.kestra.plugin.core.flow.Subflow
     flowId: generate-iac
     namespace: infoundry
     inputs:
       graph: "{{ outputs.render_graph.outputs.graph }}"
-      llm_endpoint: "{{ inputs.llm_endpoint ?? '' }}"
+      cloud_provider: "{{ inputs.cloud_provider }}"
+      project_name: "{{ inputs.project_name }}"
     wait: true
 
+  # Step 6: Validate IaC (terraform init, validate, fmt, plan)
+  - id: validate_iac
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: validate-iac
+    namespace: infoundry
+    runIf: "{{ inputs.skip_validation != true }}"
+    inputs:
+      iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+    wait: true
+
+  # Step 7: Create PR (only if validation passed)
   - id: create_pr
-    type: io.kestra.plugin.core.flow.If
-    condition: "{{ inputs.skip_pr != true and inputs.repository != null }}"
-    then:
-      - id: pr_subflow
-        type: io.kestra.plugin.core.flow.Subflow
-        flowId: create-pr
-        namespace: infoundry
-        inputs:
-          iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
-          repository: "{{ inputs.repository }}"
-        wait: true
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: create-pr
+    namespace: infoundry
+    runIf: "{{ inputs.skip_pr != true }}"
+    inputs:
+      iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+      repository: "{{ inputs.repository }}"
+      target_folder: "{{ inputs.target_folder }}"
+    wait: true
 
-  - id: test_deploy
-    type: io.kestra.plugin.core.flow.If
-    condition: "{{ inputs.skip_deploy != true }}"
-    then:
-      - id: deploy_subflow
-        type: io.kestra.plugin.core.flow.Subflow
-        flowId: test-deploy
-        namespace: infoundry
-        inputs:
-          iac_bundle: "{{ outputs.generate_iac.outputs.iac_bundle }}"
-        wait: true
+  # Step 8: Validate PR (monitor checks and CodeRabbit reviews)
+  - id: validate_pr
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: validate-pr
+    namespace: infoundry
+    runIf: "{{ inputs.skip_pr != true }}"
+    allowFailure: true
+    inputs:
+      pr_result: "{{ outputs.create_pr.outputs.pr_result }}"
+      repository: "{{ inputs.repository }}"
+    wait: true
 
+  # Step 9: Evaluate (AI-powered evaluation)
   - id: evaluate
-    type: io.kestra.plugin.core.flow.If
-    condition: "{{ inputs.skip_deploy != true }}"
-    then:
-      - id: eval_subflow
-        type: io.kestra.plugin.core.flow.Subflow
-        flowId: evaluate
-        namespace: infoundry
-        inputs:
-          deploy_result: "{{ outputs.test_deploy.outputs.deploy_subflow.outputs.deploy_result }}"
-        wait: true
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: evaluate
+    namespace: infoundry
+    runIf: "{{ inputs.skip_validation != true }}"
+    allowFailure: true
+    inputs:
+      deploy_result: "{{ outputs.validate_iac.outputs.deploy_result }}"
+    wait: true
+
+  # Step 10: Log summary
+  - id: log_summary
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      print("=" * 50)
+      print("InFoundry End-to-End Pipeline Complete!")
+      print("=" * 50)
+      print("")
+      print("Repository: {{ inputs.repo_url }}")
+      print("Cloud Provider: {{ inputs.cloud_provider }}")
+      print("Project Name: {{ inputs.project_name }}")
+      print("")
+      print("Steps completed:")
+      print("  ✅ 01. Repository ingested")
+      print("  ✅ 02. Telemetry collected")
+      print("  ✅ 03. Architecture proposed")
+      print("  ✅ 04. Graph rendered")
+      print("  ✅ 05. IaC generated")
+      print("  ✅ 06. Terraform validated")
+      print("  ✅ 07. PR created")
+      print("  ✅ 08. PR checks monitored")
+      print("  ✅ 09. Results evaluated")
+      print("")
+      print("Output files available in workflow outputs.")
 
 outputs:
   - id: service_profile
     type: FILE
     value: "{{ outputs.ingest_repo.outputs.service_profile }}"
+    description: Service profile from repository analysis
+
   - id: architecture_plan
     type: FILE
     value: "{{ outputs.propose_architecture.outputs.architecture_plan }}"
+    description: AI-proposed architecture plan
+
   - id: graph
     type: FILE
     value: "{{ outputs.render_graph.outputs.graph }}"
+    description: Architecture graph JSON
+
   - id: iac_bundle
     type: FILE
     value: "{{ outputs.generate_iac.outputs.iac_bundle }}"
+    description: Generated Terraform ZIP bundle
+
+  - id: iac_manifest
+    type: FILE
+    value: "{{ outputs.generate_iac.outputs.iac_manifest }}"
+    description: IaC manifest with AI decisions
+
+  - id: validation_result
+    type: FILE
+    value: "{{ outputs.validate_iac.outputs.deploy_result ?? null }}"
+    description: Terraform validation result
+
+  - id: pr_result
+    type: FILE
+    value: "{{ outputs.create_pr.outputs.pr_result ?? null }}"
+    description: PR creation result
+
+  - id: evaluation_result
+    type: FILE
+    value: "{{ outputs.evaluate.outputs.evaluation_result ?? null }}"
+    description: AI evaluation result

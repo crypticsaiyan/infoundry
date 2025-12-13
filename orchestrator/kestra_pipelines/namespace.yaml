@@ -6,21 +6,21 @@ description: |
   Contains shared variables, secrets references, and plugin configurations.
 
 variables:
-  # API Endpoints
-  OUMI_ENDPOINT: http://oumi:8000/v1/completions
-  CLINE_ENDPOINT: http://cline:8080/generate
-  PROMETHEUS_URL: http://prometheus:9090
-  
+  # AI Provider Configuration (Ollama)
+  OLLAMA_ENDPOINT: http://172.17.0.1:11434/v1
+  AI_MODEL: qwen2.5:7b
+
   # Default configurations
   DEFAULT_CLOUD_PROVIDER: aws
   DEFAULT_IAC_FORMAT: terraform
   DEFAULT_TEST_ENVIRONMENT: localstack
-  
+  DEFAULT_REPOSITORY: crypticsaiyan/infotest
+  DEFAULT_TARGET_FOLDER: infra
+
   # Timeout configurations
   TASK_TIMEOUT_MINUTES: 30
   PR_VALIDATION_TIMEOUT_MINUTES: 30
-  DEPLOY_TIMEOUT_MINUTES: 30
-  
+
   # Retry configurations
   DEFAULT_MAX_RETRIES: 3
   DEFAULT_RETRY_INTERVAL: PT10S
@@ -34,36 +34,47 @@ pluginDefaults:
       beforeCommands:
         - pip install --quiet requests
 
+  # Terraform validation configuration
+  - type: io.kestra.plugin.scripts.python.Script
+    forced:
+      docker:
+        image: hashicorp/terraform:1.6
+        entryPoint: [""]
+      beforeCommands:
+        - apk add --no-cache python3
+
   # Default Shell script configuration
-  - type: io.kestra.plugin.scripts.shell.Commands
+  - type: io.kestra.plugin.scripts.shell.Script
     values:
       docker:
         image: alpine:latest
-
-  # Default HTTP task configuration
-  - type: io.kestra.plugin.core.http.Request
-    values:
-      options:
-        timeout: 60000
-        retryOnConnectionFailure: true
 
 concurrency:
   limit: 5
   behavior: QUEUE
 
-# Note: Secrets should be configured in Kestra UI or via environment
-# Available secrets (configure these in Kestra):
+# Note: Secrets/KV should be configured in Kestra UI
+# Available KV keys (configure these in Kestra → Settings → Key-Value Store):
 #   - GITHUB_TOKEN: GitHub Personal Access Token for PR operations
-#   - OUMI_API_KEY: API key for Oumi model service
-#   - AWS_ACCESS_KEY_ID: AWS credentials for deployment
-#   - AWS_SECRET_ACCESS_KEY: AWS credentials for deployment
-#   - CODERABBIT_API_KEY: CodeRabbit API key (if using API mode)
+#   - AWS_ACCESS_KEY_ID: AWS credentials for terraform plan (optional)
+#   - AWS_SECRET_ACCESS_KEY: AWS credentials for terraform plan (optional)
+#   - AWS_REGION: AWS region (default: us-east-1)
 
-# Labels for organization
+# Pipeline overview:
+# 00-full-iac-pipeline: Complete orchestrated flow
+# 01-ingest-repo: Parse GitHub repository
+# 02-ingest-telemetry: Collect telemetry data
+# 03-propose-architecture: AI-based architecture proposal (Oumi)
+# 04-render-graph: Generate architecture graph
+# 05-generate-iac: AI-powered Terraform generation (Kestra AI Agent + Ollama)
+# 06-validate-iac: Terraform init, validate, fmt, plan
+# 07-create-pr: Create GitHub PR with generated IaC
+# 08-validate-pr: Monitor PR checks and CodeRabbit reviews
+# 09-evaluate: AI-powered evaluation of deployment results
+
 labels:
   project: infoundry
   team: platform
   environment: development
 
-# Disabled until production ready
 disabled: false
