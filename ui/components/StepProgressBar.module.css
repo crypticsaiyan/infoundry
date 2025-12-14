@@ -1,0 +1,172 @@
+.container {
+  width: 100%;
+  padding: var(--spacing-xl) 0;
+  overflow-x: auto;
+}
+
+.progressBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-width: 800px;
+  padding: 0 var(--spacing-md);
+}
+
+.stepWrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  flex: 1;
+}
+
+/* Connector line between steps */
+.connector {
+  position: absolute;
+  top: 18px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background-color: var(--color-border);
+  z-index: 0;
+  transition: background-color var(--transition-base);
+}
+
+.connectorCompleted {
+  background: linear-gradient(90deg, #22c55e 0%, #22c55e 100%);
+}
+
+/* Step dot */
+.step {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--color-border);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.step:hover {
+  border-color: var(--color-text-secondary);
+  transform: scale(1.1);
+}
+
+/* Pending state */
+.step.pending {
+  border-color: var(--color-border);
+  background-color: var(--color-bg-secondary);
+}
+
+.pendingNumber {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+/* Running state */
+.step.running {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.1);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.runningDot {
+  width: 12px;
+  height: 12px;
+  background-color: #3b82f6;
+  border-radius: 50%;
+  animation: glow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+  }
+}
+
+@keyframes glow {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.8);
+  }
+}
+
+/* Completed state */
+.step.completed {
+  border-color: #22c55e;
+  background-color: #22c55e;
+  color: white;
+}
+
+/* Failed state */
+.step.failed {
+  border-color: #ef4444;
+  background-color: #ef4444;
+  color: white;
+}
+
+/* Active state */
+.step.active {
+  transform: scale(1.15);
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+}
+
+/* Step labels */
+.label {
+  margin-top: var(--spacing-sm);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  text-align: center;
+  transition: color var(--transition-fast);
+  white-space: nowrap;
+}
+
+.label_running {
+  color: #3b82f6;
+  font-weight: 600;
+}
+
+.label_completed {
+  color: #22c55e;
+}
+
+.label_failed {
+  color: #ef4444;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .container {
+    padding: var(--spacing-md) 0;
+  }
+
+  .label {
+    font-size: 0.6rem;
+  }
+
+  .step {
+    width: 30px;
+    height: 30px;
+  }
+
+  .connector {
+    top: 14px;
+  }
+}

@@ -108,6 +108,13 @@ tasks:
               json.dump(result, f, indent=2)
           print(json.dumps(result, indent=2))
 
+          # EXIT WITH ERROR IF VALIDATION FAILED - stops pipeline execution
+          if not result["success"]:
+              print("\n❌ VALIDATION FAILED - stopping pipeline")
+              sys.exit(1)
+          else:
+              print("\n✅ VALIDATION PASSED - proceeding to next step")
+
 outputs:
   - id: deploy_result
     type: FILE
