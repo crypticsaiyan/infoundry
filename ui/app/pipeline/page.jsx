@@ -9,6 +9,12 @@ import StepOutputCard from '@/components/StepOutputCard';
 import { PIPELINE_STEPS } from '@/lib/kestra';
 import styles from './page.module.css';
 
+import StepOutputCard from '@/components/StepOutputCard';
+import styles from './page.module.css';
+import { PIPELINE_STEPS } from '@/lib/kestra';
+
+const POLL_INTERVAL = 2000; // 2 seconds
+
 const POLL_INTERVAL = 2000; // 2 seconds
 
 export default function PipelinePage() {
