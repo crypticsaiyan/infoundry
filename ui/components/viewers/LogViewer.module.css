@@ -39,6 +39,12 @@
   color: var(--color-text-muted);
 }
 
+/* Focus state for search box container when input is focused */
+.searchBox:focus-within {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+}
+
 .searchInput {
   width: 120px;
   background: transparent;
@@ -52,16 +58,31 @@
   color: var(--color-text-muted);
 }
 
+/* Accessible focus styles for searchInput */
+.searchInput:focus,
+.searchInput:focus-visible {
+  outline: none; /* Parent .searchBox handles focus styling */
+}
+
 .clearBtn {
   display: flex;
   padding: 2px;
   background: transparent;
   border: none;
+  border-radius: var(--radius-sm);
   color: var(--color-text-muted);
   cursor: pointer;
 }
 
 .clearBtn:hover {
+  color: var(--color-text-primary);
+}
+
+/* Accessible focus styles for clearBtn */
+.clearBtn:focus,
+.clearBtn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
   color: var(--color-text-primary);
 }
 
@@ -81,6 +102,15 @@
 
 .autoScrollBtn:hover {
   color: var(--color-text-primary);
+}
+
+/* Accessible focus styles for autoScrollBtn */
+.autoScrollBtn:focus,
+.autoScrollBtn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 1px;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
 }
 
 .autoScrollBtn.active {

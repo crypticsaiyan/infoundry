@@ -1,11 +1,10 @@
 /**
  * Kestra API Service
- * Handles communication with the Kestra orchestration server
+ * Handles communication with Kestra via Next.js API proxy routes
+ * 
+ * All Kestra calls go through /api/kestra/* routes which handle
+ * authentication and KESTRA_API_URL configuration server-side.
  */
-
-// Configuration from environment variables
-const KESTRA_API_URL = process.env.NEXT_PUBLIC_KESTRA_API_URL || 'http://localhost:8080';
-const KESTRA_NAMESPACE = 'infoundry';
 
 // Task ID to step mapping for the end-to-end pipeline
 export const PIPELINE_STEPS = [
@@ -34,12 +33,12 @@ export const STATE_MAP = {
 };
 
 /**
- * Trigger the end-to-end pipeline
+ * Trigger the end-to-end pipeline via Next.js API proxy
  * @param {Object} inputs - Pipeline input parameters
  * @returns {Promise<{executionId: string}>}
  */
 export async function triggerPipeline(inputs) {
-  const response = await fetch(`${KESTRA_API_URL}/api/v1/executions/${KESTRA_NAMESPACE}/end-to-end`, {
+  const response = await fetch('/api/kestra/execute', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -48,21 +47,20 @@ export async function triggerPipeline(inputs) {
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to trigger pipeline: ${error}`);
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to trigger pipeline');
   }
 
-  const data = await response.json();
-  return { executionId: data.id };
+  return response.json();
 }
 
 /**
- * Get execution status and task runs
+ * Get execution status and task runs via Next.js API proxy
  * @param {string} executionId 
  * @returns {Promise<{state: string, taskRuns: Array}>}
  */
 export async function getExecutionStatus(executionId) {
-  const response = await fetch(`${KESTRA_API_URL}/api/v1/executions/${executionId}`, {
+  const response = await fetch(`/api/kestra/status/${encodeURIComponent(executionId)}`, {
     method: 'GET',
     headers: {
       'Accept': 'application/json',
@@ -70,47 +68,25 @@ export async function getExecutionStatus(executionId) {
   });
 
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Failed to get execution status: ${error}`);
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to get execution status');
   }
 
-  const data = await response.json();
-  
-  // Normalize task runs to match our UI structure
-  const taskRuns = (data.taskRunList || []).map(task => ({
-    id: task.taskId,
-    state: STATE_MAP[task.state?.current] || 'pending',
-    startDate: task.state?.startDate,
-    endDate: task.state?.endDate,
-    outputs: task.outputs || {},
-  }));
-
-  return {
-    executionId: data.id,
-    state: STATE_MAP[data.state?.current] || 'pending',
-    startDate: data.state?.startDate,
-    endDate: data.state?.endDate,
-    taskRuns,
-    outputs: data.outputs || {},
-  };
+  return response.json();
 }
 
 /**
- * Get task output files
- * @param {string} executionId 
- * @param {string} taskId 
+ * Get file content from Kestra storage via Next.js API proxy
+ * @param {string} uri - Kestra internal storage URI (kestra:///...)
  * @returns {Promise<Object>}
  */
-export async function getTaskOutput(executionId, taskId) {
-  const response = await fetch(
-    `${KESTRA_API_URL}/api/v1/executions/${executionId}/outputs/${taskId}`,
-    {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      },
-    }
-  );
+export async function getFileContent(uri) {
+  const response = await fetch(`/api/kestra/file?uri=${encodeURIComponent(uri)}`, {
+    method: 'GET',
+    headers: {
+      'Accept': 'application/json',
+    },
+  });
 
   if (!response.ok) {
     return null;

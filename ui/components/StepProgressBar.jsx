@@ -1,19 +1,14 @@
 "use client";
 
+import { PIPELINE_STEPS } from '@/lib/kestra';
 import styles from './StepProgressBar.module.css';
 
-// Pipeline step definitions
-const STEPS = [
-  { id: 'ingest_repo', label: 'Ingest Repo', shortLabel: '1' },
-  { id: 'ingest_telemetry', label: 'Telemetry', shortLabel: '2' },
-  { id: 'propose_architecture', label: 'Propose Arch', shortLabel: '3' },
-  { id: 'render_graph', label: 'Render Graph', shortLabel: '4' },
-  { id: 'generate_iac', label: 'Generate IaC', shortLabel: '5' },
-  { id: 'validate_iac', label: 'Validate IaC', shortLabel: '6' },
-  { id: 'create_pr', label: 'Create PR', shortLabel: '7' },
-  { id: 'validate_pr', label: 'Validate PR', shortLabel: '8' },
-  { id: 'evaluate', label: 'Evaluate', shortLabel: '9' },
-];
+// Transform PIPELINE_STEPS to include shortLabel for display
+const STEPS = PIPELINE_STEPS.map((step, index) => ({
+  id: step.id,
+  label: step.label,
+  shortLabel: step.order?.toString() || (index + 1).toString(),
+}));
 
 export default function StepProgressBar({ steps = [], currentStep, onStepClick }) {
   // Create a map for quick lookups

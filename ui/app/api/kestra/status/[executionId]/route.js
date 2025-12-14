@@ -1,21 +1,13 @@
 import { NextResponse } from 'next/server';
+import { STATE_MAP } from '@/lib/kestra';
+
+// Pin to Node.js runtime (required for Buffer usage)
+export const runtime = 'nodejs';
 
 // Kestra API configuration
 const KESTRA_API_URL = process.env.KESTRA_API_URL || 'http://localhost:8080';
 const KESTRA_TENANT = process.env.KESTRA_TENANT || 'main';
-
-// Kestra state to UI state mapping
-const STATE_MAP = {
-  CREATED: 'pending',
-  QUEUED: 'pending',
-  RUNNING: 'running',
-  SUCCESS: 'completed',
-  WARNING: 'completed',
-  FAILED: 'failed',
-  RETRYING: 'running',
-  PAUSED: 'pending',
-  KILLED: 'failed',
-};
+const FETCH_TIMEOUT_MS = 10000; // 10 second timeout
 
 // Build auth headers based on available credentials
 function getAuthHeaders() {
@@ -51,23 +43,52 @@ export async function GET(request, { params }) {
       );
     }
 
-    // URL format: /api/v1/{tenant}/executions/{executionId}
-    const kestraUrl = `${KESTRA_API_URL}/api/v1/${KESTRA_TENANT}/executions/${executionId}`;
+    // URL-encode the executionId to prevent injection/malformed URLs
+    const encodedExecutionId = encodeURIComponent(executionId);
     
-    const response = await fetch(kestraUrl, {
-      method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-        ...getAuthHeaders(),
-      },
-    });
+    // URL format: /api/v1/{tenant}/executions/{executionId}
+    const kestraUrl = `${KESTRA_API_URL}/api/v1/${KESTRA_TENANT}/executions/${encodedExecutionId}`;
+    
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    
+    let response;
+    try {
+      response = await fetch(kestraUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          ...getAuthHeaders(),
+        },
+        signal: controller.signal,
+      });
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+      // Handle timeout or network errors
+      if (fetchError.name === 'AbortError') {
+        console.error('Kestra API timeout:', kestraUrl);
+        return NextResponse.json(
+          { error: 'Request timed out. Please try again.' },
+          { status: 504 }
+        );
+      }
+      throw fetchError;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
+      // Log detailed error on server, return generic message to client
       const errorText = await response.text();
-      console.error('Kestra API error:', errorText);
+      console.error('Kestra API error:', {
+        status: response.status,
+        url: kestraUrl,
+        body: errorText,
+      });
       return NextResponse.json(
-        { error: 'Failed to get execution status', details: errorText },
-        { status: response.status }
+        { error: 'Failed to fetch execution status. Please try again.' },
+        { status: response.status >= 500 ? 502 : response.status }
       );
     }
 
@@ -103,9 +124,10 @@ export async function GET(request, { params }) {
     });
 
   } catch (error) {
+    // Log detailed error on server, return generic message to client
     console.error('Error fetching execution status:', error);
     return NextResponse.json(
-      { error: 'Internal server error', message: error.message },
+      { error: 'An unexpected error occurred. Please try again.' },
       { status: 500 }
     );
   }
