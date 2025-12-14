@@ -1,14 +1,12 @@
 #!/bin/bash
-# Generate a PR message in markdown format
-# Usage: ./generate-pr.sh [base-branch]
-# Example: ./generate-pr.sh dev
-# 
-# This script analyzes commits made AFTER branching from the base branch
-# and generates a PR description following the project template.
+# Generate a PR message using Cline CLI
+# Usage: ./generate-pr.sh [base-branch] [output-file]
+# Example: ./generate-pr.sh dev PR_DESCRIPTION.md
 
 set -euo pipefail
 
 BASE_BRANCH="${1:-dev}"
+OUTPUT_FILE="${2:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -31,141 +29,68 @@ COMMIT_COUNT=$(git rev-list --count "$MERGE_BASE"..HEAD)
 
 echo "# Analyzing $COMMIT_COUNT commits since branching from $BASE_BRANCH..." >&2
 
-# Determine change type based on files
-HAS_IAC=false
-HAS_DOCS=false
-HAS_CONFIG=false
-HAS_FEATURE=false
-HAS_BUGFIX=false
-HAS_REFACTOR=false
+# Read the PR template
+TEMPLATE=$(cat "$REPO_ROOT/.github/PULL_REQUEST_TEMPLATE.md" 2>/dev/null || echo "")
 
-if echo "$FILES_CHANGED" | grep -qE '\.(tf|yaml|yml)$'; then
-  HAS_IAC=true
-fi
-if echo "$FILES_CHANGED" | grep -qiE '(readme|docs|\.md)'; then
-  HAS_DOCS=true
-fi
-if echo "$FILES_CHANGED" | grep -qE '(config|\.json|\.env)'; then
-  HAS_CONFIG=true
-fi
-if echo "$FILES_CHANGED" | grep -qE '\.(ts|js|py)$'; then
-  HAS_FEATURE=true
-fi
-if echo "$COMMIT_MESSAGES" | grep -qiE '(fix|bug|patch)'; then
-  HAS_BUGFIX=true
-fi
-if echo "$COMMIT_MESSAGES" | grep -qiE '(refactor|cleanup|clean)'; then
-  HAS_REFACTOR=true
-fi
+# Write context to a temp file for Cline to read
+CONTEXT_FILE=$(mktemp)
+cat > "$CONTEXT_FILE" << EOF
+Generate a GitHub Pull Request description for the following changes.
 
-# Generate PR title from branch name
-PR_TITLE=$(echo "$CURRENT_BRANCH" | sed 's|^feat/||; s|^fix/||; s|^feature/||; s|-| |g; s|_| |g')
+## SOURCE BRANCH: $CURRENT_BRANCH
+## TARGET BRANCH: $BASE_BRANCH
+## NUMBER OF COMMITS: $COMMIT_COUNT
 
-# Function to generate basic PR
-generate_basic_pr() {
+## COMMIT MESSAGES:
+$COMMIT_MESSAGES
+
+## FILES CHANGED:
+$FILES_CHANGED
+
+## DIFF STATISTICS:
+$DIFF_STAT
+
+## PR TEMPLATE TO FOLLOW:
+$TEMPLATE
+
+INSTRUCTIONS:
+1. Follow the PR template structure exactly
+2. Check appropriate checkboxes with [x] based on what changed
+3. Fill in the Description based on the commits
+4. List the Changes Made from the commit messages
+5. Output ONLY the completed markdown, nothing else
+EOF
+
+echo "# Running Cline CLI..." >&2
+
+# Run Cline with the context file
+cline -y "Read $CONTEXT_FILE and generate a PR description following the template. Output only markdown." --mode act 2>/dev/null || {
+  echo "# Cline failed, falling back to basic template..." >&2
   cat << ENDPR
 # Pull Request
 
 ## Description
-$PR_TITLE
-
 Branch \`$CURRENT_BRANCH\` → \`$BASE_BRANCH\` ($COMMIT_COUNT commits)
 
 ## Type of Change
-$( [ "$HAS_BUGFIX" = true ] && echo "- [x] 🐛 Bug fix (non-breaking change that fixes an issue)" || echo "- [ ] 🐛 Bug fix" )
-$( [ "$HAS_FEATURE" = true ] && echo "- [x] ✨ New feature (non-breaking change that adds functionality)" || echo "- [ ] ✨ New feature" )
-- [ ] 💥 Breaking change (fix or feature that would cause existing functionality to change)
-$( [ "$HAS_DOCS" = true ] && echo "- [x] 📚 Documentation update" || echo "- [ ] 📚 Documentation update" )
-$( [ "$HAS_CONFIG" = true ] && echo "- [x] 🔧 Configuration change" || echo "- [ ] 🔧 Configuration change" )
-$( [ "$HAS_REFACTOR" = true ] && echo "- [x] ♻️ Refactor (no functional changes)" || echo "- [ ] ♻️ Refactor" )
-$( [ "$HAS_IAC" = true ] && echo "- [x] 🏗️ Infrastructure/IaC change" || echo "- [ ] 🏗️ Infrastructure/IaC change" )
-
-## Related Issues
-Closes #
+- [x] ✨ New feature (non-breaking change that adds functionality)
 
 ## Changes Made
 $(echo "$COMMIT_MESSAGES" | sed 's/^[a-f0-9]* /- /')
 
-## Infrastructure Changes (if applicable)
-$( [ "$HAS_IAC" = true ] && echo "- [x] Terraform files modified" || echo "- [ ] Terraform files modified" )
-- [ ] New cloud resources added
-- [ ] Security groups/IAM policies changed
-- [ ] Cost impact assessed
-
-## Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing completed
-$( [ "$HAS_IAC" = true ] && echo "- [ ] IaC validation (\`terraform validate\`) passes" )
+## Files Changed
+\`\`\`
+$DIFF_STAT
+\`\`\`
 
 ## Checklist
 - [x] My code follows the project's coding standards
 - [x] I have performed a self-review of my code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings or errors
-- [ ] I have added tests that prove my fix/feature works
-
-## CodeRabbit Review
-- [ ] I have addressed all CodeRabbit suggestions
-- [ ] Critical security/performance issues resolved
-$( [ "$HAS_IAC" = true ] && echo "- [ ] IaC best practices followed" )
-
-## Files Changed ($COMMIT_COUNT commits)
-\`\`\`
-$DIFF_STAT
-\`\`\`
 
 ---
-*Generated by InFoundry PR Script*
+*Generated by InFoundry*
 ENDPR
 }
 
-# Read the PR template
-TEMPLATE="$REPO_ROOT/.github/PULL_REQUEST_TEMPLATE.md"
-
-# Create prompt for Cline
-PROMPT=$(cat << EOF
-Based on the following git changes, generate a Pull Request description following this exact template format.
-Fill in all sections appropriately. Check the relevant checkboxes with [x] based on what changed.
-
-## Git Info
-- Source Branch: $CURRENT_BRANCH
-- Target Branch: $BASE_BRANCH
-- Commits Since Branching: $COMMIT_COUNT
-
-## Commits (newest first):
-$COMMIT_MESSAGES
-
-## Files Changed:
-$FILES_CHANGED
-
-## Diff Summary:
-$DIFF_STAT
-
-## Template to Follow:
-$(cat "$TEMPLATE" 2>/dev/null || echo "Standard PR template")
-
-Generate the completed PR description in markdown. Be concise and accurate.
-Only output the markdown content, no explanations or code fences around the whole thing.
-EOF
-)
-
-# Check if Cline is available and try to use it
-if command -v cline &> /dev/null; then
-  echo "# Using Cline CLI to generate PR message..." >&2
-  OUTPUT=$(echo "$PROMPT" | cline -y "Generate a PR description following the template" --mode act -F json 2>/dev/null | \
-    sed -n '/^{/,$p' | \
-    jq -r 'select(.say == "completion_result") | .text' 2>/dev/null | \
-    sed 's/\\n/\n/g' || echo "")
-  
-  if [ -n "$OUTPUT" ] && [ "$OUTPUT" != "" ]; then
-    echo "$OUTPUT"
-  else
-    echo "# Cline unavailable, generating from template..." >&2
-    generate_basic_pr
-  fi
-else
-  echo "# Cline CLI not installed, generating from template..." >&2
-  generate_basic_pr
-fi
+# Cleanup
+rm -f "$CONTEXT_FILE"
