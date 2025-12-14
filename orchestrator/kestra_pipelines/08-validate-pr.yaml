@@ -1,0 +1,118 @@
+id: validate-pr
+namespace: infoundry
+
+description: Polls GitHub for PR check statuses and CodeRabbit reviews
+
+inputs:
+  - id: pr_result
+    type: FILE
+    required: true
+    description: PR result JSON from create-pr flow
+
+  - id: repository
+    type: STRING
+    required: true
+    defaults: "crypticsaiyan/infotest"
+    description: GitHub repository (owner/repo format)
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - validation_result.json
+    tasks:
+      - id: download_pr
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          pr_result.json: "{{ inputs.pr_result }}"
+
+      - id: validate
+        type: io.kestra.plugin.scripts.python.Script
+        env:
+          GITHUB_TOKEN: "{{ kv('GITHUB_TOKEN') }}"
+          REPOSITORY: "{{ inputs.repository }}"
+        script: |
+          import json
+          import os
+          import time
+          import urllib.request
+          import urllib.error
+
+          github_token = os.environ.get("GITHUB_TOKEN", "")
+          repository = os.environ.get("REPOSITORY", "")
+
+          with open("pr_result.json") as f:
+              pr_result = json.load(f)
+
+          pr_number = pr_result.get("pr_number")
+
+          result = {
+              "pr_number": pr_number,
+              "repository": repository,
+              "checks": [],
+              "reviews": [],
+              "status": "pending",
+              "passed": False
+          }
+
+          if not pr_number:
+              result["status"] = "skipped"
+              result["message"] = "No PR number provided"
+          elif not github_token:
+              result["status"] = "skipped"
+              result["message"] = "No GitHub token configured"
+          else:
+              def github_api(endpoint):
+                  url = f"https://api.github.com/repos/{repository}{endpoint}"
+                  headers = {
+                      "Authorization": f"token {github_token}",
+                      "Accept": "application/vnd.github.v3+json"
+                  }
+                  req = urllib.request.Request(url, headers=headers)
+                  try:
+                      with urllib.request.urlopen(req, timeout=30) as resp:
+                          return json.load(resp)
+                  except:
+                      return None
+              
+              # Poll for checks (up to 5 minutes)
+              max_attempts = 30
+              for attempt in range(max_attempts):
+                  pr = github_api(f"/pulls/{pr_number}")
+                  if pr:
+                      head_sha = pr.get("head", {}).get("sha")
+                      if head_sha:
+                          checks = github_api(f"/commits/{head_sha}/check-runs")
+                          if checks:
+                              result["checks"] = [
+                                  {"name": c["name"], "status": c["status"], "conclusion": c.get("conclusion")}
+                                  for c in checks.get("check_runs", [])
+                              ]
+                              
+                              all_complete = all(c["status"] == "completed" for c in result["checks"])
+                              all_passed = all(c.get("conclusion") in ["success", "skipped"] for c in result["checks"])
+                              
+                              if all_complete:
+                                  result["status"] = "completed"
+                                  result["passed"] = all_passed
+                                  break
+                  
+                  if attempt < max_attempts - 1:
+                      time.sleep(10)
+              
+              # Get reviews
+              reviews = github_api(f"/pulls/{pr_number}/reviews")
+              if reviews:
+                  result["reviews"] = [
+                      {"user": r.get("user", {}).get("login"), "state": r.get("state")}
+                      for r in reviews
+                  ]
+
+          with open("validation_result.json", "w") as f:
+              json.dump(result, f, indent=2)
+          print(json.dumps(result, indent=2))
+
+outputs:
+  - id: validation_result
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['validation_result.json'] }}"

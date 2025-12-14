@@ -1,260 +1,502 @@
-# CloudGenesis Blueprint (copy-paste friendly)
+# InFoundry Blueprint
 
-This blueprint is a complete plan for building CloudGenesis as an open-source, human-in-the-loop cloud architect + SRE agent. It includes architecture, repo layout, 7-day plan, CI/CD, Oumi training notes, Kestra pipelines, Cline + CodeRabbit integration, security, metrics, demo script, and stretch goals.
+This document provides the complete system design blueprint for InFoundry, including project structure, component specifications, and implementation details.
 
-## Table of contents
-1. What CloudGenesis does (short)
-2. High-level architecture (text diagram)
-3. Component responsibilities
-4. Repo structure (copyable)
-5. Development stack & prerequisites
-6. Step-by-step 7-day build plan
-7. Example configs & code snippets
-8. CI/CD, testing, and quality gates
-9. Best open-source practices & contributor workflow
-10. Security, privacy & safety checklist
-11. Metrics, evaluation & judging criteria
-12. Demo script (3–5 minutes)
-13. Hardest technical challenges + mitigations
-14. Stretch goals & future roadmap
-15. Quick start checklist
+## Project Structure
 
-## 1) What CloudGenesis does (short)
-- Reads a repo and runtime telemetry.
-- Proposes infra changes (IaC, autoscaling, DB indexes, instance types).
-- Generates PRs via Cline and submits to CodeRabbit for review.
-- Runs simulated/test deployments, collects metrics via Kestra.
-- Uses Oumi (SFT + simple RL) to rank/choose actions and improve over time.
-- Shows actions, estimated impact, and before/after results in a Vercel UI.
-
-## 2) High-level architecture (text diagram)
 ```
-[Repo + Codebase] --> Repo Analyzer
-                             |
-                             v
-                       Kestra Ingest & Summaries
-    (metrics/traces/logs/billing/slow-queries -> structured summary)
-                             |
-                             v
-                      Decision Model (Oumi)
-                             |
-    +------------+-----------+------------+--------------+
-    |            |                        |              |
-    v            v                        v              v
-Cline (Generate) -> PR -> CodeRabbit (Review) -> Merge/Deploy
-                             |
-                             v
-                   Simulation Runner / Test Env
-                             |
-                             v
-                        Observability (Prom/OTel)
-                             |
-                             v
-                      Kestra collects results (loop)
-```
-
-## 3) Component responsibilities
-- **Repo Analyzer (Python/Node):** Static detection of services, Dockerfiles, frameworks, DB usage, heavy endpoints. Outputs JSON service profiles.
-- **Kestra:** Aggregates telemetry (Prometheus, traces, logs, billing mock) and summarizes into compact inputs for Oumi (`summary.json`).
-- **Oumi:** SFT + optional GRPO RL for multi-objective reward; returns ranked actions.
-- **Cline CLI:** Renders IaC/Helm/Terraform, smoke-test harnesses, creates PRs programmatically.
-- **CodeRabbit:** PR gate for Terraform plan, terratest, secret scanning, migration safety, style, tests.
-- **Simulation Runner (localstack/kind):** Applies IaC in a safe environment; runs smoke and synthetic load tests (k6/vegeta).
-- **Vercel UI (Next.js):** Project overview, recommendations, PR monitor, before/after charts, manual approvals.
-
-## 4) Repo structure (copyable)
-```
-cloudgenesis/
-├─ infra/                       # IaC templates (Terraform / Helm)
-│  ├─ templates/
-│  └─ modules/
-├─ services/                    # Example microservices (auth, payments)
-│  ├─ auth/
-│  └─ payments/
-├─ orchestrator/                # main controller (FastAPI / Express)
-│  ├─ repo_analyzer/
-│  ├─ kestra_pipelines/
-│  ├─ cline_integration/
-│  └─ oumi_integration/
-├─ tests/                       # smoke tests, integration tests, load scripts
-├─ examples/                    # mock telemetry + SFT examples
-│  ├─ telemetry/
-│  └─ sft_examples.jsonl
-├─ ui/                          # Next.js (Vercel) app
-│  ├─ pages/
-│  └─ components/
-├─ scripts/
-│  ├─ simulate_load.py
-│  └─ compute_reward.py
-├─ .github/
-│  └─ workflows/                # CI workflows
-├─ docs/
-│  └─ CONTRIBUTING.md
-└─ README.md
+infoundry/
+├── docs/                           # Documentation
+│   ├── architecture.md             # System architecture overview
+│   ├── blueprint.md                # This file - system design
+│   └── runlocally.md               # Local development guide
+│
+├── examples/                       # Sample data files
+│   ├── sample_architecture_plan.json
+│   ├── sample_deploy_result.json
+│   ├── sample_graph.json
+│   ├── sample_pr_result.json
+│   ├── sample_service_profile.json
+│   ├── sample_telemetry_summary.json
+│   └── sft_examples.jsonl          # Training examples
+│
+├── infoundry-mcp-server/           # Cline MCP integration
+│   ├── src/
+│   │   └── index.ts                # MCP server implementation
+│   ├── package.json
+│   └── tsconfig.json
+│
+├── orchestrator/                   # Kestra pipeline definitions
+│   └── kestra_pipelines/
+│       ├── 00-end-to-end.yaml      # Master pipeline
+│       ├── 01-ingest-repo.yaml
+│       ├── 02-ingest-telemetry.yaml
+│       ├── 03-propose-architecture.yaml
+│       ├── 04-render-graph.yaml
+│       ├── 05-generate-iac.yaml
+│       ├── 06-validate-iac.yaml
+│       ├── 07-create-pr.yaml
+│       ├── 08-validate-pr.yaml
+│       ├── 09-evaluate.yaml
+│       └── namespace.yaml
+│
+├── oumi/                           # AI model training & serving
+│   ├── serve.py                    # FastAPI model server
+│   ├── train_sft.py                # SFT training script
+│   ├── run_inference.py            # Model testing
+│   ├── generate_training_data.py   # Training data generator
+│   ├── generate_with_oumi.py       # Model-based data generator
+│   ├── InFoundry_Cloud_Training.ipynb  # Colab notebook
+│   ├── generated_training_data.jsonl
+│   └── trained_model/              # LoRA adapter weights
+│
+├── scripts/                        # Utility scripts
+│   └── generate-pr.sh
+│
+├── tests/                          # Unit tests
+│   ├── test_generate_training_data.py
+│   ├── test_kestra.js
+│   ├── test_mcp_server.mjs
+│   └── test_oumi_serve.py
+│
+├── ui/                             # Next.js React dashboard
+│   ├── app/                        # App Router pages
+│   │   ├── page.jsx                # Landing page
+│   │   ├── layout.jsx
+│   │   ├── globals.css
+│   │   ├── api/                    # API routes
+│   │   ├── configure/
+│   │   ├── dashboard/
+│   │   └── pipeline/
+│   ├── components/                 # React components
+│   │   ├── PipelineForm.jsx
+│   │   ├── StepProgressBar.jsx
+│   │   ├── StepOutputCard.jsx
+│   │   └── viewers/
+│   └── lib/
+│       └── kestra.js               # Kestra API client
+│
+├── requirements.txt                # Python dependencies
+├── README.md
+├── LICENSE
+├── CHANGELOG.md
+├── CODE_OF_CONDUCT.md
+├── CONTRIBUTING.md
+├── ROADMAP.md
+└── SECURITY.md
 ```
 
-## 5) Development stack & prerequisites
-- Python 3.11+ (or 3.10) and Node.js 18+.
-- Orchestrator: FastAPI (Python) or Express (Node).
-- Kestra: local or mocked pipeline YAML (Kestra server optional).
-- Oumi: Oumi CLI/API; SFT + LoRA for MVP.
-- Cline: CLI + API token (sponsor tool).
-- CodeRabbit: GitHub app integration (sponsor tool).
-- IaC: Terraform or Helm (k8s via kind).
-- Simulation: localstack for AWS or kind for k8s.
-- Monitoring: Prometheus + OpenTelemetry + Grafana (or simulated metrics JSON).
-- Testing: Pytest / Jest, Terratest/terraform plan, k6 for load.
+## Component Specifications
 
-## 6) Step-by-step 7-day build plan (tasks per day)
-- **Day 0 (prep):** Repo, GH Actions, README, LICENSE, CODE_OF_CONDUCT, CONTRIBUTING, Vercel link, install Cline, set CodeRabbit creds.
-- **Day 1:** Sample services (auth, payments); repo_analyzer `scan.py` → `service_profile.json`; example telemetry; simple Next.js page showing profile.
-- **Day 2:** Kestra pipeline to ingest telemetry → `summary.json`; summary script computing p50/p95/error_rate/cost; `/summaries` endpoint.
-- **Day 3:** Build `examples/sft_examples.jsonl` (50–200 pairs); `oumi_train.yaml`; quick SFT to produce LoRA adapter; `oumi_integration.py` to return top-N actions.
-- **Day 4:** Cline templates for Terraform/Helm; `cline_integration.py` to render IaC and `cline pr create`; CodeRabbit webhook/Action for plan/tests.
-- **Day 5:** Simulation runner applying PR to test env (localstack/kind); smoke + load tests; `compute_reward.py` to score before/after; persist results.
-- **Day 6:** UI polish (Recommendations, PR Monitor, Before/After charts); manual approve/reject and what-if simulations.
-- **Day 7:** Docs, demo script, final run-through, Vercel deploy.
+### 1. Oumi AI Model
 
-## 7) Example configs & code snippets
-### 7.1 Kestra pipeline (pseudo YAML)
-```
-id: collect-and-summarize
-tasks:
-  - id: fetch-metrics
-    type: http
-    url: file://./examples/telemetry/metrics.json
-  - id: summarize
-    type: script
-    script: |
-      #!/usr/bin/env python3
-      import json
-      metrics = json.load(open('examples/telemetry/metrics.json'))
-      summary = {}
-      for svc, vals in metrics.items():
-          p95 = sorted(vals['latencies'])[int(0.95*len(vals['latencies']))]
-          p50 = sorted(vals['latencies'])[int(0.5*len(vals['latencies']))]
-          summary[svc] = {'p50': p50, 'p95': p95, 'error_rate': sum(vals['errors'])/len(vals['errors'])}
-      print(json.dumps(summary))
-  - id: emit
-    type: http
-    url: http://localhost:8000/api/summaries
+**Purpose:** Intelligent cloud architecture recommendations
+
+**Specification:**
+- **Base Model:** Qwen/Qwen2.5-1.5B-Instruct
+- **Fine-tuning Method:** LoRA (Low-Rank Adaptation)
+- **Training Examples:** 500
+- **Output Format:** JSON with architecture pattern, components, and rationale
+
+**API Contract (`/v1/chat/completions`):**
+
+```typescript
+// Request
+interface CompletionRequest {
+  model: string;            // Default: "codellama"
+  messages?: Message[];     // Chat messages
+  prompt?: string;          // Direct prompt
+  max_tokens?: number;      // Default: 2000
+  temperature?: number;     // Default: 0.7
+}
+
+// Response
+interface CompletionResponse {
+  id: string;
+  choices: [{
+    message: {
+      role: "assistant";
+      content: string;      // JSON architecture recommendation
+    };
+    finish_reason: "stop";
+  }];
+}
 ```
 
-### 7.2 Oumi training config (simplified)
-```
-model:
-  base: "base-llm-checkpoint"
-  adapter: "lora"
-data:
-  sft_examples: "examples/sft_examples.jsonl"
-rl:
-  method: "grpo"
-  reward:
-    cost_weight: 0.4
-    latency_weight: 0.5
-    reliability_weight: 0.1
-eval:
-  simulation_runner: "scripts/simulate_load.py"
-training:
-  epochs: 3
-  batch_size: 8
+**Architecture Output Schema:**
+```json
+{
+  "pattern": "serverless|microservices_ecs|kubernetes|event_driven|lift_and_shift",
+  "components": ["api_gateway", "lambda", "rds", "..."],
+  "topology": "N services with PATTERN on CLOUD",
+  "scaling_strategy": "horizontal_autoscaling|serverless_autoscaling|kubernetes_hpa|vertical_scaling",
+  "estimated_cost_tier": "low|medium|high",
+  "rationale": "Explanation of architecture choice"
+}
 ```
 
-### 7.3 SFT example (examples/sft_examples.jsonl)
+### 2. Kestra Pipelines
+
+**Purpose:** Orchestrate the complete IaC generation workflow
+
+**Pipeline Inputs (`00-end-to-end.yaml`):**
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `repo_url` | STRING | Yes | - | Git repository URL |
+| `branch` | STRING | Yes | "main" | Git branch to clone |
+| `repository` | STRING | Yes | "crypticsaiyan/infotest" | GitHub repo for PR (owner/repo) |
+| `cloud_provider` | STRING | Yes | "aws" | Target cloud (aws, gcp, azure) |
+| `project_name` | STRING | Yes | "infoundry" | Project name for resources |
+| `target_folder` | STRING | Yes | "infra" | Target folder for Terraform |
+| `skip_pr` | BOOLEAN | Yes | false | Skip PR creation |
+| `skip_validation` | BOOLEAN | Yes | false | Skip validation step |
+
+**Pipeline Outputs:**
+
+| Output | Type | Description |
+|--------|------|-------------|
+| `service_profile` | FILE | Repository analysis results |
+| `architecture_plan` | FILE | AI-proposed architecture |
+| `graph` | FILE | React Flow graph JSON |
+| `iac_bundle` | FILE | Generated Terraform ZIP |
+| `iac_manifest` | FILE | IaC generation manifest |
+
+**Kestra Namespace:** `infoundry`
+
+### 3. MCP Server
+
+**Purpose:** Expose InFoundry tools to Cline CLI
+
+**Tools Specification:**
+
+#### Tool: `ingest_repo`
+```typescript
+{
+  repoPath: string;  // Local path OR GitHub URL
+}
+// Returns: ServiceProfile JSON
 ```
-{"input":"summary:{\"auth\":{\"p95\":420,\"p50\":120,\"error_rate\":0.01,\"cost\":40}}, repo_profile:{\"auth\":{\"cpu_est\":0.7}}","output":"action: add_hpa(service=auth,min=2,max=6); scale_instance(auth, from=t3.small,to=t3.medium)"}
+
+#### Tool: `ingest_telemetry`
+```typescript
+{
+  services: string;      // Comma-separated service names
+  metricsJson?: string;  // Optional real metrics JSON
+}
+// Returns: TelemetrySummary JSON
 ```
 
-### 7.4 Reward compute (scripts/compute_reward.py)
-```python
-def reward(before, after, weights=(0.4, 0.5, 0.1)):
-    cost_delta = (before['cost'] - after['cost']) / max(1, before['cost'])
-    latency_delta = (before['p95'] - after['p95']) / max(1, before['p95'])
-    reliability_delta = after.get('uptime', 1.0) - before.get('uptime', 1.0)
-    return weights[0]*cost_delta + weights[1]*latency_delta + weights[2]*reliability_delta
+#### Tool: `propose_architecture`
+```typescript
+{
+  serviceProfile: string;      // JSON from ingest_repo
+  telemetrySummary?: string;   // JSON from ingest_telemetry
+  cloudProvider?: string;      // aws, gcp, azure (default: aws)
+}
+// Returns: ArchitecturePlan JSON
 ```
 
-### 7.5 Cline example commands (pseudo)
+#### Tool: `render_graph`
+```typescript
+{
+  architecturePlan: string;  // JSON from propose_architecture
+}
+// Returns: ReactFlow Graph JSON
 ```
-cline generate infra --service auth --provider aws --pattern ecs --output infra/auth
-cline pr create --repo your-org/cloudgenesis --branch cloudgenesis/autoscale-auth --title "Auto: Add HPA for auth" --files infra/auth
+
+#### Tool: `generate_iac`
+```typescript
+{
+  graph: string;           // JSON from render_graph
+  cloudProvider?: string;  // aws, gcp, azure
+  projectName?: string;    // Resource naming prefix
+}
+// Returns: TerraformBundle with manifest
 ```
 
-### 7.6 CodeRabbit policy sample (pseudo-checklist)
-- Terraform plan completes without error.
-- No hardcoded secrets or credentials.
-- Migration does not drop data without backup.
-- Unit tests exist for service code changes.
-- At least one smoke test included for infra change.
-- Implement as GitHub Action that runs `terraform init && terraform plan`.
+#### Tool: `validate_iac`
+```typescript
+{
+  iacBundle: string;  // Path to Terraform files
+}
+// Returns: ValidationResult JSON
+```
 
-## 8) CI/CD, testing, and quality gates
-- PR gating: All Cline PRs must pass CodeRabbit checks before merge.
-- Workflows: `ci/test.yml` (unit, lint, type checks), `ci/iac-check.yml` (terraform fmt/validate/plan or terratest), `ci/security.yml` (secret scan, dep audit).
-- Test env: localstack for AWS, kind for k8s.
-- Smoke/load tests: k6/vegeta under `tests/`.
-- Automated rollback: failing smoke tests block merge or trigger rollback playbook.
+#### Tool: `create_pr`
+```typescript
+{
+  iacBundle: string;     // Path to Terraform files
+  repository: string;    // owner/repo
+  targetFolder?: string; // Target folder in repo
+  labels?: string;       // Comma-separated labels
+}
+// Returns: PRResult JSON
+```
 
-## 9) Best open-source practices & contributor workflow
-- Apache-2.0 license; README with purpose and how-to-run.
-- CONTRIBUTING with PR template, code style, testing requirements, labels.
-- CODE_OF_CONDUCT (Contributor Covenant).
-- Issue templates (bug/feature); branch strategy main/dev/feat-*; Conventional Commits.
-- Changelog with semantic versioning or Unreleased section.
-- Docs: `docs/architecture.md`, `docs/runlocally.md`, `docs/oumi.md`.
-- Reproducible dev env (devcontainer or Docker compose).
+#### Tool: `validate_pr`
+```typescript
+{
+  prResult: string;    // JSON from create_pr
+  repository: string;  // owner/repo
+}
+// Returns: ValidationStatus JSON
+```
 
-## 10) Security, privacy & safety checklist
-- Secrets in GitHub Secrets/Vault; no repo secrets.
-- Least privilege IAM; block open security groups and oversized instances.
-- Human-in-loop: never auto-merge to main; CodeRabbit gate required.
-- Telemetry anonymized; use test accounts/localstack for validation.
-- Audit log every agent action and PR; rate-limit PR generation.
-- Validate Oumi outputs with rule-based guardrails.
-- Run dependency and secret scans in CI.
+#### Tool: `evaluate`
+```typescript
+{
+  deployResult: string;  // JSON from validate_iac
+}
+// Returns: EvaluationResult JSON
+```
 
-## 11) Metrics, evaluation & judging criteria
-- P95 latency reduction; cost reduction estimate.
-- Time saved (analysis + implementation).
-- Number of safe automated PRs and % passing CodeRabbit.
-- False-positive/unsafe-change rate.
-- Loop time (analysis → PR → test deploy).
-- Include a one-slide metrics dashboard.
+### 4. Next.js UI
 
-## 12) Demo script (3–5 minutes)
-1. Intro (15s): “CloudGenesis: autonomous cloud architect for dev teams.”
-2. UI Overview (20s): Project Overview page with services/p95/cost.
-3. Trigger Analysis (30s): Click “Analyze” → Kestra summarizer → `summary.json`.
-4. Recommendation (30s): Oumi suggests “Add HPA to auth; change instance type.” Show estimated impact.
-5. Create PR (20s): Click “Apply” → Cline PR → show GitHub, CodeRabbit checks.
-6. Test Deploy (45s): Merge to test branch → deploy to localstack/kind → smoke/load tests; show before/after charts.
-7. Wrap (20s): Summarize improvements; emphasize human-in-loop safety.
+**Purpose:** Visual dashboard for architecture management
 
-## 13) Hardest technical challenges + mitigations
-- Multi-objective optimization: start with weighted latency/cost; expose weights in UI.
-- Safety of IaC: rule-based validators, CodeRabbit gating, terraform plan in test env.
-- Noisy telemetry: synthetic load + sliding windows; SFT on synthetic examples.
-- Runtime constraints: small SFT/LoRA adapters; defer RL unless time permits.
+**Pages:**
 
-## 14) Stretch goals & future roadmap
-- Multi-cloud planner (AWS/GCP/Azure), migration suggestions.
-- Multi-agent specialization (DB/network/infra).
-- Live RL with canaries and auto-rollback.
-- Auto-generated runbooks and postmortems.
-- Billing optimization (reserved instances, savings plans).
-- Marketplace for reusable IaC patterns and cost rules.
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/` | `page.jsx` | Landing page with features |
+| `/dashboard` | `dashboard/page.jsx` | React Flow architecture editor |
+| `/pipeline` | `pipeline/page.jsx` | Pipeline execution & monitoring |
+| `/configure` | `configure/page.jsx` | Service configuration |
 
-## 15) Quick start checklist
-- GitHub repo + Actions enabled.
-- Add Apache-2.0 LICENSE, README, CONTRIBUTING, CODE_OF_CONDUCT.
-- Sample services `auth` and `payments` with Dockerfiles.
-- Implement `repo_analyzer/scan.py` → `service_profile.json`.
-- Add telemetry in `examples/telemetry/metrics.json`.
-- Add Kestra pipelines to POST summaries to orchestrator.
-- Create `examples/sft_examples.jsonl` (50 SFT samples).
-- Prepare `oumi_train.yaml` and run quick SFT.
-- Implement `oumi_integration.py` to call model and return actions.
-- Add Cline templates and `cline_integration.py` to create PRs.
-- GitHub Action for terraform plan/tests (CodeRabbit simulated if needed).
-- Deploy UI to Vercel; prepare demo script; run E2E once.
+**API Routes:**
 
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/kestra/execute` | POST | Trigger Kestra pipeline |
+| `/api/kestra/status/[id]` | GET | Get execution status |
+| `/api/kestra/file` | GET | Fetch Kestra storage file |
+
+**Environment Variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KESTRA_API_URL` | `http://localhost:8080` | Kestra server URL |
+| `KESTRA_TENANT` | `main` | Kestra tenant ID |
+| `KESTRA_API_TOKEN` | - | Optional API token |
+| `KESTRA_USERNAME` | - | Optional basic auth username |
+| `KESTRA_PASSWORD` | - | Optional basic auth password |
+
+## Data Schemas
+
+### ServiceProfile
+
+```json
+{
+  "source": "https://github.com/owner/repo",
+  "services": {
+    "backend": { "type": "nodejs", "path": "/backend" },
+    "frontend": { "type": "nodejs", "path": "/frontend" }
+  },
+  "databases": ["postgres"],
+  "queues": ["redis"],
+  "service_count": 2,
+  "primary_language": "nodejs",
+  "has_infrastructure": false,
+  "analyzed_at": "2024-01-01T00:00:00Z"
+}
+```
+
+### TelemetrySummary
+
+```json
+{
+  "summary": {
+    "backend": {
+      "p50": 120,
+      "p95": 350,
+      "avg_latency": 180,
+      "error_rate": 0.02,
+      "cost": 45,
+      "cpu_usage": 0.65,
+      "memory_mb": 384
+    }
+  },
+  "collected_at": "2024-01-01T00:00:00Z",
+  "source": "mock|provided"
+}
+```
+
+### ArchitecturePlan
+
+```json
+{
+  "architecture": {
+    "pattern": "microservices_ecs",
+    "components": ["api_gateway", "ecs_cluster", "alb", "rds"],
+    "topology": "2 services with microservices_ecs pattern on aws",
+    "scaling_strategy": "horizontal_autoscaling",
+    "estimated_cost_tier": "medium",
+    "rationale": "Selected microservices_ecs based on 2 services"
+  },
+  "inputs": {
+    "service_count": 2,
+    "cloud_provider": "aws"
+  },
+  "source": "oumi|heuristic"
+}
+```
+
+### ReactFlow Graph
+
+```json
+{
+  "nodes": [
+    {
+      "id": "api_gateway",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Api Gateway",
+        "type": "api_gateway",
+        "icon": "globe",
+        "category": "network",
+        "scaling": false
+      },
+      "position": { "x": 0, "y": 180 },
+      "style": {
+        "background": "#FF9800",
+        "borderRadius": "8px"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "cdn-api_gateway",
+      "source": "cdn",
+      "target": "api_gateway",
+      "type": "smoothstep",
+      "animated": true
+    }
+  ]
+}
+```
+
+### IaC Manifest
+
+```json
+{
+  "files": ["main.tf", "variables.tf", "outputs.tf"],
+  "cloud_provider": "aws",
+  "project_name": "infoundry",
+  "components": ["api_gateway", "ecs_cluster", "rds"],
+  "generated_at": "2024-01-01T00:00:00Z"
+}
+```
+
+## Infrastructure Components Mapping
+
+### AWS Components
+
+| Component | Terraform Resource | Description |
+|-----------|-------------------|-------------|
+| `api_gateway` | `aws_apigatewayv2_api` | HTTP API Gateway |
+| `ecs_cluster` | `aws_ecs_cluster` | ECS Fargate Cluster |
+| `eks_cluster` | `aws_eks_cluster` | Kubernetes Cluster |
+| `lambda_functions` | `aws_lambda_function` | Serverless Functions |
+| `alb` | `aws_lb` | Application Load Balancer |
+| `rds` | `aws_db_instance` | RDS PostgreSQL/MySQL |
+| `dynamodb` | `aws_dynamodb_table` | NoSQL Database |
+| `elasticache` | `aws_elasticache_cluster` | Redis Cache |
+| `sqs` | `aws_sqs_queue` | Message Queue |
+| `sns` | `aws_sns_topic` | Pub/Sub Topic |
+| `msk` | `aws_msk_cluster` | Managed Kafka |
+| `cdn` | `aws_cloudfront_distribution` | CDN |
+| `s3` | `aws_s3_bucket` | Object Storage |
+
+## Decision Matrix
+
+### Architecture Pattern Selection
+
+| Criteria | serverless | microservices_ecs | kubernetes | event_driven |
+|----------|------------|-------------------|------------|--------------|
+| Service Count | 1-2 | 3-4 | 5+ | Any |
+| Traffic Pattern | Low/Burst | Moderate | High | Event-based |
+| Cost Sensitivity | High | Medium | Low | Medium |
+| Latency Needs | Variable | Low | Very Low | Async OK |
+| Team Size | Small | Medium | Large | Medium |
+
+### Scaling Strategy Selection
+
+| Strategy | Use Case | Components |
+|----------|----------|------------|
+| `serverless_autoscaling` | Lambda functions | No configuration needed |
+| `vertical_scaling` | Simple apps, DBs | Resize instances |
+| `horizontal_autoscaling` | Stateless services | ASG, ECS Service scaling |
+| `kubernetes_hpa` | K8s workloads | Horizontal Pod Autoscaler |
+
+## Testing Strategy
+
+### Unit Tests
+
+```bash
+# Python tests (pytest)
+pytest tests/ -v
+
+# MCP server tests (Node.js)
+node tests/test_mcp_server.mjs
+
+# Oumi server tests
+pytest tests/test_oumi_serve.py -v
+```
+
+### Integration Tests
+
+```bash
+# Kestra pipeline tests
+node tests/test_kestra.js
+```
+
+### Manual Testing
+
+1. Start all services (see `runlocally.md`)
+2. Open UI at http://localhost:3000
+3. Navigate to `/pipeline`
+4. Enter a GitHub repository URL
+5. Run the pipeline and monitor progress
+
+## Deployment Options
+
+### Local Development
+- Docker Compose for all services
+- See `runlocally.md` for details
+
+### Cloud Deployment
+
+**Vercel (UI):**
+```bash
+cd ui
+vercel deploy
+```
+
+**Docker (Services):**
+```dockerfile
+# Example Oumi Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY oumi/ .
+CMD ["uvicorn", "serve:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Kubernetes:**
+- Deploy Kestra via Helm chart
+- Deploy Oumi server as Deployment + Service
+- Deploy UI as Deployment + Ingress
+
+## Future Enhancements
+
+See [ROADMAP.md](../ROADMAP.md) for planned features:
+
+- Multi-cloud support (GCP, Azure)
+- Enhanced authentication
+- Automated compliance auditing
+- CI/CD platform integrations
+- Advanced cost estimation
+- AI-driven architecture optimization
+- Collaborative real-time editing

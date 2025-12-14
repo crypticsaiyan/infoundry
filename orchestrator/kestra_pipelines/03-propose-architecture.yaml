@@ -1,0 +1,205 @@
+id: propose-architecture
+namespace: infoundry
+
+description: |
+    Proposes cloud architecture using the Oumi model server.
+    Calls the local serve.py FastAPI server.
+
+inputs:
+    - id: service_profile
+      type: FILE
+      required: true
+      description: Service profile JSON from ingest-repo flow
+
+    - id: telemetry_summary
+      type: FILE
+      required: true
+      description: Telemetry summary JSON from ingest-telemetry flow
+
+    - id: use_oumi
+      type: BOOLEAN
+      defaults: true
+      description: Use the Oumi model server (set false for heuristic only)
+
+    - id: cloud_provider
+      type: STRING
+      defaults: "aws"
+      description: Target cloud provider (aws, gcp, azure)
+
+    - id: oumi_server_url
+      type: STRING
+      defaults: "http://172.17.0.1:8000"
+      description: URL of the Oumi serve.py server
+
+tasks:
+    - id: working_dir
+      type: io.kestra.plugin.core.flow.WorkingDirectory
+      outputFiles:
+          - architecture_plan.json
+      tasks:
+          - id: download_inputs
+            type: io.kestra.plugin.core.storage.LocalFiles
+            inputs:
+                service_profile.json: "{{ inputs.service_profile }}"
+                telemetry_summary.json: "{{ inputs.telemetry_summary }}"
+
+          - id: propose
+            type: io.kestra.plugin.scripts.python.Script
+            env:
+                USE_OUMI: "{{ inputs.use_oumi ?? 'true' }}"
+                CLOUD_PROVIDER: "{{ inputs.cloud_provider ?? 'aws' }}"
+                OUMI_SERVER: "{{ inputs.oumi_server_url ?? 'http://172.17.0.1:8000' }}"
+            script: |
+                import json
+                import os
+                import urllib.request
+                import urllib.error
+
+                use_oumi = os.environ.get("USE_OUMI", "true").lower() == "true"
+                cloud_provider = os.environ.get("CLOUD_PROVIDER", "aws")
+                oumi_server = os.environ.get("OUMI_SERVER", "http://172.17.0.1:8000")
+
+                # Load inputs
+                with open("service_profile.json") as f:
+                    service_profile = json.load(f)
+
+                with open("telemetry_summary.json") as f:
+                    telemetry_summary = json.load(f)
+
+                services = service_profile.get("services", {})
+                telemetry = telemetry_summary.get("summary", {})
+                languages = service_profile.get("languages", [])
+                primary_language = service_profile.get("primary_language", "unknown")
+
+                def heuristic_proposal(services, telemetry, cloud_provider):
+                    """Fallback when Oumi server unavailable."""
+                    num_services = len(services)
+                    has_high_latency = any(s.get("p95", 0) > 400 for s in telemetry.values())
+                    total_cost = sum(s.get("cost", 0) for s in telemetry.values())
+                    
+                    if num_services <= 2:
+                        pattern = "serverless"
+                        components = ["api_gateway", "lambda_functions", "dynamodb"]
+                    elif num_services > 4:
+                        pattern = "kubernetes"
+                        components = ["eks_cluster", "alb", "rds", "elasticache"]
+                    else:
+                        pattern = "microservices_ecs"
+                        components = ["ecs_cluster", "alb", "rds", "elasticache"]
+                    
+                    if has_high_latency:
+                        components.extend(["hpa", "cdn"])
+                    
+                    for svc in services.values():
+                        svc_str = str(svc).lower()
+                        if "postgres" in svc_str and "rds" not in components:
+                            components.append("rds")
+                        if "redis" in svc_str and "elasticache" not in components:
+                            components.append("elasticache")
+                    
+                    return {
+                        "pattern": pattern,
+                        "components": list(set(components)),
+                        "topology": f"{num_services} services with {pattern} on {cloud_provider}",
+                        "scaling_strategy": "horizontal_autoscaling" if has_high_latency else "vertical_scaling",
+                        "estimated_cost_tier": "high" if total_cost > 100 else "medium" if total_cost > 50 else "low",
+                        "rationale": f"Selected {pattern} for {num_services} services"
+                    }
+
+                def call_oumi_server(prompt, oumi_server):
+                    """Call the local Oumi serve.py server."""
+                    api_url = f"{oumi_server}/v1/chat/completions"
+                    
+                    payload = {
+                        "model": "oumi",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 512,
+                        "temperature": 0.7
+                    }
+                    
+                    print(f"Calling Oumi server: {api_url}")
+                    
+                    try:
+                        req = urllib.request.Request(
+                            api_url,
+                            data=json.dumps(payload).encode(),
+                            headers={"Content-Type": "application/json"}
+                        )
+                        
+                        with urllib.request.urlopen(req, timeout=120) as resp:
+                            result = json.load(resp)
+                            if "choices" in result and len(result["choices"]) > 0:
+                                content = result["choices"][0]["message"]["content"]
+                                print(f"Oumi response: {content[:200]}...")
+                                return content
+                            return None
+                            
+                    except urllib.error.HTTPError as e:
+                        print(f"Oumi server HTTP error {e.code}: {e.read().decode()}")
+                        return None
+                    except Exception as e:
+                        print(f"Oumi server error: {e}")
+                        return None
+
+                def parse_response(response):
+                    """Parse JSON from model response."""
+                    if not response:
+                        return None
+                    try:
+                        start = response.find("{")
+                        end = response.rfind("}") + 1
+                        if start >= 0 and end > start:
+                            return json.loads(response[start:end])
+                    except json.JSONDecodeError as e:
+                        print(f"JSON parse error: {e}")
+                    return None
+
+                # Build prompt for Oumi
+                service_list = list(services.keys())
+                databases = []
+                for svc in services.values():
+                    databases.extend(svc.get("databases", []))
+                databases = list(set(databases))
+
+                prompt = f"Services: [{', '.join(service_list) if service_list else 'main'}], Language: {primary_language}, DB: {', '.join(databases) if databases else 'none'}, Cloud: {cloud_provider}"
+
+                # Main execution
+                proposal = None
+                source = "heuristic"
+
+                if use_oumi:
+                    print("=== OUMI MODEL ARCHITECTURE PROPOSAL ===")
+                    response = call_oumi_server(prompt, oumi_server)
+                    proposal = parse_response(response)
+                    if proposal:
+                        source = "oumi"
+                        print("Oumi model success!")
+                    else:
+                        print("Oumi failed, using heuristic...")
+                else:
+                    print("=== HEURISTIC MODE ===")
+
+                if not proposal:
+                    proposal = heuristic_proposal(services, telemetry, cloud_provider)
+
+                output = {
+                    "architecture": proposal,
+                    "inputs": {
+                        "service_count": len(services),
+                        "cloud_provider": cloud_provider,
+                        "languages": languages,
+                        "primary_language": primary_language
+                    },
+                    "source": source
+                }
+
+                with open("architecture_plan.json", "w") as f:
+                    json.dump(output, f, indent=2)
+
+                print("=== OUTPUT ===")
+                print(json.dumps(output, indent=2))
+
+outputs:
+    - id: architecture_plan
+      type: FILE
+      value: "{{ outputs.working_dir.outputFiles['architecture_plan.json'] }}"

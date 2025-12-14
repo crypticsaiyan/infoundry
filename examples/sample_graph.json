@@ -1,0 +1,170 @@
+{
+  "nodes": [
+    {
+      "id": "cdn",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Cdn",
+        "type": "cdn",
+        "icon": "cloud",
+        "category": "network",
+        "scaling": false
+      },
+      "position": { "x": 125, "y": 0 },
+      "style": {
+        "background": "#00BCD4",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    },
+    {
+      "id": "api_gateway",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Api Gateway",
+        "type": "api_gateway",
+        "icon": "globe",
+        "category": "network",
+        "scaling": false
+      },
+      "position": { "x": 0, "y": 180 },
+      "style": {
+        "background": "#FF9800",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    },
+    {
+      "id": "alb",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Alb",
+        "type": "alb",
+        "icon": "share-2",
+        "category": "network",
+        "scaling": false
+      },
+      "position": { "x": 250, "y": 180 },
+      "style": {
+        "background": "#2196F3",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    },
+    {
+      "id": "ecs_cluster",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Ecs Cluster",
+        "type": "ecs_cluster",
+        "icon": "box",
+        "category": "compute",
+        "scaling": true
+      },
+      "position": { "x": 125, "y": 360 },
+      "style": {
+        "background": "#4CAF50",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    },
+    {
+      "id": "rds",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Rds",
+        "type": "rds",
+        "icon": "database",
+        "category": "database",
+        "scaling": false
+      },
+      "position": { "x": 0, "y": 540 },
+      "style": {
+        "background": "#3F51B5",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    },
+    {
+      "id": "elasticache",
+      "type": "infrastructureNode",
+      "data": {
+        "label": "Elasticache",
+        "type": "elasticache",
+        "icon": "cpu",
+        "category": "cache",
+        "scaling": false
+      },
+      "position": { "x": 250, "y": 540 },
+      "style": {
+        "background": "#E91E63",
+        "borderRadius": "8px",
+        "border": "2px solid rgba(255,255,255,0.2)"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e0",
+      "source": "cdn",
+      "target": "alb",
+      "type": "smoothstep",
+      "animated": true,
+      "style": { "stroke": "#00BCD4" }
+    },
+    {
+      "id": "e1",
+      "source": "cdn",
+      "target": "api_gateway",
+      "type": "smoothstep",
+      "animated": true,
+      "style": { "stroke": "#00BCD4" }
+    },
+    {
+      "id": "e2",
+      "source": "api_gateway",
+      "target": "ecs_cluster",
+      "type": "smoothstep",
+      "animated": true,
+      "style": { "stroke": "#FF9800" }
+    },
+    {
+      "id": "e3",
+      "source": "alb",
+      "target": "ecs_cluster",
+      "type": "smoothstep",
+      "animated": true,
+      "style": { "stroke": "#2196F3" }
+    },
+    {
+      "id": "e4",
+      "source": "ecs_cluster",
+      "target": "rds",
+      "type": "smoothstep",
+      "animated": false,
+      "style": { "stroke": "#4CAF50" }
+    },
+    {
+      "id": "e5",
+      "source": "ecs_cluster",
+      "target": "elasticache",
+      "type": "smoothstep",
+      "animated": false,
+      "style": { "stroke": "#4CAF50" }
+    }
+  ],
+  "metadata": {
+    "pattern": "microservices_ecs",
+    "topology": "3 services with microservices_ecs on aws",
+    "scaling_strategy": "horizontal_autoscaling",
+    "rationale": "Selected microservices_ecs for 3 services with high latency indicators",
+    "estimated_cost_tier": "medium",
+    "component_count": 6,
+    "edge_count": 6,
+    "source": "oumi",
+    "cloud_provider": "aws",
+    "service_count": 3,
+    "primary_language": "python",
+    "generated_at": "2025-12-13T07:30:00.000000"
+  }
+}

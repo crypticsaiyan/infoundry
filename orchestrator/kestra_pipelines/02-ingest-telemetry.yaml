@@ -1,0 +1,74 @@
+id: ingest-telemetry
+namespace: infoundry
+
+description: Fetches telemetry metrics (mock data for development)
+
+inputs:
+  - id: services
+    type: STRING
+    required: false
+    description: Comma-separated list of services
+
+tasks:
+  - id: generate_telemetry
+    type: io.kestra.plugin.scripts.python.Script
+    script: |
+      import json
+      import os
+      from datetime import datetime
+
+      services_input = os.environ.get("SERVICES", "backend,frontend")
+      services = [s.strip() for s in services_input.split(",")]
+
+      # Mock metrics data
+      MOCK_DATA = {
+          "backend": {"latencies": [120, 140, 200, 450, 500], "errors": [0, 0, 0, 1, 0], "cost": 60},
+          "frontend": {"latencies": [90, 110, 130, 150, 170], "errors": [0, 0, 0, 0, 0], "cost": 35},
+          "auth": {"latencies": [120, 140, 200, 450, 500], "errors": [0, 0, 0, 1, 0], "cost": 60},
+          "payments": {"latencies": [90, 110, 130, 150, 170], "errors": [0, 0, 0, 0, 1], "cost": 35},
+      }
+      DEFAULT = {"latencies": [100, 120, 140, 160, 180], "errors": [0, 0, 0, 0, 0], "cost": 25}
+
+      def summarize(metrics):
+          lats = sorted(metrics.get("latencies", []))
+          errs = metrics.get("errors", [])
+          n = len(lats)
+          if n == 0:
+              return {
+                  "p50": 0,
+                  "p95": 0,
+                  "avg_latency": 0,
+                  "error_rate": 0,
+                  "cost": metrics.get("cost", 0)
+              }
+          return {
+              "p50": lats[n // 2],
+              "p95": lats[max(0, int(n * 0.95) - 1)],
+              "avg_latency": sum(lats) / n if n else 0,
+              "error_rate": sum(errs) / max(len(errs), 1),
+              "cost": metrics.get("cost", 0)
+          }
+
+      summary = {}
+      for svc in services:
+          raw = MOCK_DATA.get(svc, DEFAULT)
+          summary[svc] = summarize(raw)
+
+      output = {
+          "summary": summary,
+          "collected_at": datetime.utcnow().isoformat(),
+          "source": "mock"
+      }
+
+      with open("telemetry_summary.json", "w") as f:
+          json.dump(output, f, indent=2)
+      print(json.dumps(output, indent=2))
+    env:
+      SERVICES: "{{ inputs.services ?? 'backend,frontend' }}"
+    outputFiles:
+      - telemetry_summary.json
+
+outputs:
+  - id: telemetry_summary
+    type: FILE
+    value: "{{ outputs.generate_telemetry.outputFiles['telemetry_summary.json'] }}"

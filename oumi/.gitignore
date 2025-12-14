@@ -1,0 +1,5 @@
+trained_model/
+*.safetensors
+*.pt
+*.bin
+venv/

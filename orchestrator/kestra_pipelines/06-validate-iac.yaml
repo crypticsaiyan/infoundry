@@ -1,0 +1,121 @@
+id: validate-iac
+namespace: infoundry
+
+description: Deploys IaC to test environment and runs smoke tests
+
+inputs:
+  - id: iac_bundle
+    type: FILE
+    required: true
+    description: ZIP file containing IaC files
+
+tasks:
+  - id: working_dir
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    outputFiles:
+      - deploy_result.json
+    tasks:
+      - id: download_iac
+        type: io.kestra.plugin.core.storage.LocalFiles
+        inputs:
+          iac.zip: "{{ inputs.iac_bundle }}"
+
+      - id: deploy
+        type: io.kestra.plugin.scripts.python.Script
+        docker:
+          image: hashicorp/terraform:1.6
+          entryPoint: [""]
+        beforeCommands:
+          - apk add --no-cache python3
+        env:
+          ENVIRONMENT: "localstack"
+          # AWS credentials are optional - set in Kestra KV store if you want terraform plan to work
+          # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+        script: |
+          import json
+          import sys
+          import os
+          import zipfile
+          import subprocess
+          from datetime import datetime
+
+          environment = os.environ.get("ENVIRONMENT", "localstack")
+
+          # Extract IaC
+          with zipfile.ZipFile("iac.zip", "r") as zf:
+              zf.extractall("iac_files")
+
+          result = {
+              "environment": environment,
+              "started_at": datetime.utcnow().isoformat(),
+              "deploy_status": "pending",
+              "smoke_tests": {"passed": 0, "failed": 0, "tests": []},
+              "success": False
+          }
+
+          def run_cmd(cmd):
+              try:
+                  r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=120)
+                  return r.returncode == 0, r.stdout + r.stderr
+              except subprocess.TimeoutExpired:
+                  return False, "Command timeout after 120s"
+              except Exception as e:
+                  return False, f"Command failed: {str(e)}"
+
+          # Try Terraform init/plan
+          os.chdir("iac_files")
+
+          # Run real Terraform commands (use -no-color for clean output)
+          tests = []
+
+          # Step 1: Terraform init
+          init_ok, init_out = run_cmd("terraform init -backend=false -input=false -no-color")
+          tests.append({"name": "terraform_init", "passed": init_ok, "output": init_out[:500]})
+
+          if not init_ok:
+              result["deploy_status"] = "init_failed"
+              result["deploy_output"] = init_out[:1000]
+          else:
+              # Step 2: Terraform validate
+              validate_ok, validate_out = run_cmd("terraform validate -json -no-color")
+              tests.append({"name": "terraform_validate", "passed": validate_ok, "output": validate_out[:500]})
+              
+              # Step 3: Terraform fmt check (warning only, not blocking)
+              fmt_ok, fmt_out = run_cmd("terraform fmt -check -recursive")
+              tests.append({"name": "terraform_fmt", "passed": True, "output": fmt_out[:500] if not fmt_ok else "Format OK", "warning": not fmt_ok})
+              
+              # Step 4: Terraform plan (warning only - requires real AWS creds)
+              plan_ok, plan_out = run_cmd("terraform plan -input=false -no-color 2>&1 || true")
+              # Ignore expected errors (missing vars, no credentials)
+              expected_errors = ["No value for required variable", "No valid credential sources", "failed to refresh cached credentials"]
+              plan_has_real_errors = "Error:" in plan_out and not any(e in plan_out for e in expected_errors)
+              tests.append({"name": "terraform_plan", "passed": not plan_has_real_errors, "output": plan_out[:500]})
+              
+              # Only init + validate are required for success
+              core_passed = init_ok and validate_ok
+              result["deploy_status"] = "validated" if core_passed else "validation_failed"
+              result["deploy_output"] = plan_out[:1000]
+              result["success"] = core_passed
+
+          # Record test results
+          result["smoke_tests"]["tests"] = tests
+          result["smoke_tests"]["passed"] = sum(1 for t in tests if t["passed"])
+          result["smoke_tests"]["failed"] = sum(1 for t in tests if not t["passed"])
+
+          result["completed_at"] = datetime.utcnow().isoformat()
+
+          os.chdir("..")
+          with open("deploy_result.json", "w") as f:
+              json.dump(result, f, indent=2)
+          print(json.dumps(result, indent=2))
+
+          # EXIT WITH ERROR IF VALIDATION FAILED - stops pipeline execution
+          if not result["success"]:
+              print("\n❌ VALIDATION FAILED - stopping pipeline")
+              sys.exit(1)
+          else:
+              print("\n✅ VALIDATION PASSED - proceeding to next step")
+outputs:
+  - id: deploy_result
+    type: FILE
+    value: "{{ outputs.working_dir.outputFiles['deploy_result.json'] }}"

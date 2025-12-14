@@ -1,0 +1,278 @@
+id: render-graph
+namespace: infoundry
+
+description: Converts architecture plan to React Flow graph format for UI
+
+inputs:
+    - id: architecture_plan
+      type: FILE
+      required: true
+      description: Architecture plan JSON from propose-architecture flow
+
+tasks:
+    - id: working_dir
+      type: io.kestra.plugin.core.flow.WorkingDirectory
+      outputFiles:
+          - graph.json
+      tasks:
+          - id: download_plan
+            type: io.kestra.plugin.core.storage.LocalFiles
+            inputs:
+                architecture_plan.json: "{{ inputs.architecture_plan }}"
+
+          - id: render
+            type: io.kestra.plugin.scripts.python.Script
+            script: |
+                import json
+                import sys
+                from datetime import datetime
+
+                # Extended component styling - aligned with 03-propose-architecture output
+                STYLES = {
+                    # Network layer
+                    "api_gateway": {"icon": "globe", "color": "#FF9800", "category": "network", "tier": 1},
+                    "alb": {"icon": "share-2", "color": "#2196F3", "category": "network", "tier": 1},
+                    "cdn": {"icon": "cloud", "color": "#00BCD4", "category": "network", "tier": 0},
+                    
+                    # Compute layer
+                    "ecs_cluster": {"icon": "box", "color": "#4CAF50", "category": "compute", "tier": 2},
+                    "eks_cluster": {"icon": "layers", "color": "#9C27B0", "category": "compute", "tier": 2},
+                    "lambda_functions": {"icon": "zap", "color": "#FF5722", "category": "compute", "tier": 2},
+                    "ec2": {"icon": "server", "color": "#66BB6A", "category": "compute", "tier": 2},
+                    
+                    # Database layer
+                    "rds": {"icon": "database", "color": "#3F51B5", "category": "database", "tier": 3},
+                    "dynamodb": {"icon": "grid", "color": "#009688", "category": "database", "tier": 3},
+                    "aurora": {"icon": "database", "color": "#5C6BC0", "category": "database", "tier": 3},
+                    
+                    # Cache layer
+                    "elasticache": {"icon": "cpu", "color": "#E91E63", "category": "cache", "tier": 3},
+                    "redis": {"icon": "cpu", "color": "#E91E63", "category": "cache", "tier": 3},
+                    
+                    # Storage layer
+                    "s3": {"icon": "archive", "color": "#795548", "category": "storage", "tier": 3},
+                    "efs": {"icon": "folder", "color": "#8D6E63", "category": "storage", "tier": 3},
+                    
+                    # Messaging layer
+                    "sqs": {"icon": "mail", "color": "#607D8B", "category": "messaging", "tier": 3},
+                    "sns": {"icon": "bell", "color": "#78909C", "category": "messaging", "tier": 3},
+                    "eventbridge": {"icon": "activity", "color": "#546E7A", "category": "messaging", "tier": 3},
+                    
+                    # Scaling/monitoring
+                    "hpa": {"icon": "trending-up", "color": "#8BC34A", "category": "scaling", "tier": 2},
+                    "cloudwatch": {"icon": "eye", "color": "#FFC107", "category": "monitoring", "tier": 4},
+                    "xray": {"icon": "crosshair", "color": "#FFEB3B", "category": "monitoring", "tier": 4},
+                }
+
+                # Connection rules - defines valid source -> target relationships
+                CONNECTIONS = {
+                    # Network tier connections
+                    "cdn": ["s3", "alb", "api_gateway"],
+                    "api_gateway": ["lambda_functions", "ecs_cluster", "eks_cluster", "alb", "ec2"],
+                    "alb": ["ecs_cluster", "eks_cluster", "lambda_functions", "ec2"],
+                    
+                    # Compute tier connections
+                    "ecs_cluster": ["rds", "aurora", "elasticache", "redis", "dynamodb", "sqs", "sns", "s3"],
+                    "eks_cluster": ["rds", "aurora", "elasticache", "redis", "dynamodb", "sqs", "sns", "s3"],
+                    "lambda_functions": ["dynamodb", "s3", "sqs", "sns", "rds", "aurora", "elasticache", "eventbridge"],
+                    "ec2": ["rds", "aurora", "elasticache", "s3", "efs"],
+                    
+                    # Scaling connections
+                    "hpa": ["ecs_cluster", "eks_cluster"],
+                    
+                    # Messaging connections
+                    "eventbridge": ["lambda_functions", "sqs", "sns"],
+                    "sns": ["sqs", "lambda_functions"],
+                }
+
+                def load_architecture_plan(filepath):
+                    """Load and validate the architecture plan from 03-propose-architecture."""
+                    try:
+                        with open(filepath) as f:
+                            plan = json.load(f)
+                    except FileNotFoundError:
+                        print(f"ERROR: {filepath} not found")
+                        sys.exit(1)
+                    except json.JSONDecodeError as e:
+                        print(f"ERROR: Invalid JSON in {filepath}: {e}")
+                        sys.exit(1)
+                    
+                    # Validate expected structure from 03-propose-architecture
+                    if "architecture" not in plan:
+                        print("WARNING: 'architecture' key missing, using empty structure")
+                        plan["architecture"] = {}
+                    
+                    return plan
+
+                def normalize_component_name(comp):
+                    """Normalize component names for consistent matching."""
+                    # Handle variations in naming
+                    name = comp.lower().strip().replace("-", "_").replace(" ", "_")
+                    
+                    # Map common aliases
+                    aliases = {
+                        "lambda": "lambda_functions",
+                        "lambdas": "lambda_functions",
+                        "ecs": "ecs_cluster",
+                        "eks": "eks_cluster",
+                        "postgres": "rds",
+                        "postgresql": "rds",
+                        "mysql": "rds",
+                        "cache": "elasticache",
+                        "load_balancer": "alb",
+                        "lb": "alb",
+                        "cloudfront": "cdn",
+                        "queue": "sqs",
+                        "bucket": "s3",
+                    }
+                    return aliases.get(name, name)
+
+                def create_nodes(components, pattern, scaling_strategy):
+                    """Create React Flow nodes with tier-based HORIZONTAL positioning (left-to-right)."""
+                    nodes = []
+                    
+                    # Normalize and deduplicate components
+                    normalized = []
+                    seen = set()
+                    for comp in components:
+                        norm = normalize_component_name(comp)
+                        if norm not in seen:
+                            normalized.append(norm)
+                            seen.add(norm)
+                    
+                    # Group by tier for layout
+                    by_tier = {}
+                    for comp in normalized:
+                        style = STYLES.get(comp, {"icon": "box", "color": "#999", "category": "other", "tier": 5})
+                        tier = style.get("tier", 5)
+                        by_tier.setdefault(tier, []).append(comp)
+                    
+                    # Position nodes in HORIZONTAL tiered layout (left-to-right)
+                    x_offset = 0
+                    node_positions = {}
+                    for tier in sorted(by_tier.keys()):
+                        tier_components = by_tier[tier]
+                        tier_height = len(tier_components) * 150
+                        start_y = -tier_height // 2 + 75
+                        
+                        for i, comp in enumerate(tier_components):
+                            node_positions[comp] = {"x": x_offset, "y": start_y + i * 150}
+                        x_offset += 280  # Horizontal spacing between tiers
+                    
+                    # Create node objects
+                    for comp in normalized:
+                        style = STYLES.get(comp, {"icon": "box", "color": "#999", "category": "other", "tier": 5})
+                        pos = node_positions.get(comp, {"x": 0, "y": 0})
+                        
+                        # Determine if scaling is enabled for this component
+                        has_scaling = scaling_strategy in ["horizontal_autoscaling", "auto"] and \
+                                      comp in ["ecs_cluster", "eks_cluster", "lambda_functions"]
+                        
+                        nodes.append({
+                            "id": comp,
+                            "type": "infrastructureNode",
+                            "data": {
+                                "label": comp.replace("_", " ").title(),
+                                "type": comp,
+                                "icon": style["icon"],
+                                "category": style["category"],
+                                "scaling": has_scaling
+                            },
+                            "position": pos,
+                            "style": {
+                                "background": style["color"],
+                                "borderRadius": "8px",
+                                "border": "2px solid rgba(255,255,255,0.2)"
+                            }
+                        })
+                    
+                    return nodes, normalized
+
+                def create_edges(normalized_components):
+                    """Create React Flow edges based on connection rules."""
+                    edges = []
+                    edge_id = 0
+                    comp_set = set(normalized_components)
+                    
+                    for source, targets in CONNECTIONS.items():
+                        if source in comp_set:
+                            for target in targets:
+                                if target in comp_set:
+                                    # Determine edge style based on source type
+                                    source_style = STYLES.get(source, {})
+                                    is_animated = source_style.get("category") in ["network", "scaling"]
+                                    
+                                    edges.append({
+                                        "id": f"e{edge_id}",
+                                        "source": source,
+                                        "target": target,
+                                        "type": "smoothstep",
+                                        "animated": is_animated,
+                                        "style": {"stroke": source_style.get("color", "#999")}
+                                    })
+                                    edge_id += 1
+                    
+                    return edges
+
+                # Main execution
+                print("=== RENDER GRAPH PIPELINE ===")
+                print(f"Timestamp: {datetime.utcnow().isoformat()}")
+
+                plan = load_architecture_plan("architecture_plan.json")
+
+                # Extract data from 03-propose-architecture output structure
+                arch = plan.get("architecture", {})
+                components = arch.get("components", [])
+                pattern = arch.get("pattern", "unknown")
+                topology = arch.get("topology", "")
+                scaling_strategy = arch.get("scaling_strategy", "vertical_scaling")
+                rationale = arch.get("rationale", "")
+                cost_tier = arch.get("estimated_cost_tier", "medium")
+
+                # Get input metadata
+                inputs_meta = plan.get("inputs", {})
+                source = plan.get("source", "unknown")  # "oumi" or "heuristic"
+
+                print(f"Source: {source}")
+                print(f"Pattern: {pattern}")
+                print(f"Components: {components}")
+                print(f"Scaling: {scaling_strategy}")
+
+                if not components:
+                    print("WARNING: No components found in architecture plan")
+                    components = ["api_gateway", "lambda_functions", "dynamodb"]  # Fallback
+
+                # Create graph elements
+                nodes, normalized_components = create_nodes(components, pattern, scaling_strategy)
+                edges = create_edges(normalized_components)
+
+                # Build final graph with full metadata
+                graph = {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "metadata": {
+                        "pattern": pattern,
+                        "topology": topology,
+                        "scaling_strategy": scaling_strategy,
+                        "rationale": rationale,
+                        "estimated_cost_tier": cost_tier,
+                        "component_count": len(nodes),
+                        "edge_count": len(edges),
+                        "source": source,
+                        "cloud_provider": inputs_meta.get("cloud_provider", "aws"),
+                        "service_count": inputs_meta.get("service_count", 0),
+                        "primary_language": inputs_meta.get("primary_language", "unknown"),
+                        "generated_at": datetime.utcnow().isoformat()
+                    }
+                }
+
+                with open("graph.json", "w") as f:
+                    json.dump(graph, f, indent=2)
+
+                print("=== OUTPUT ===")
+                print(json.dumps(graph, indent=2))
+
+outputs:
+    - id: graph
+      type: FILE
+      value: "{{ outputs.working_dir.outputFiles['graph.json'] }}"
