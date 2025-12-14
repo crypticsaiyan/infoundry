@@ -5,15 +5,24 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import styles from "./Header.module.css";
 
+/**
+ * Site header component with logo, desktop navigation, auth actions, and a toggleable mobile menu.
+ *
+ * The component displays navigation links, a "Get Started" action, and a mobile menu that opens and closes
+ * via a toggle button (the mobile menu closes when a mobile nav link is clicked). The mobile toggle button
+ * includes an accessible `aria-label`.
+ *
+ * @returns {JSX.Element} The header element containing the responsive navigation UI.
+ */
 export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navLinks = [
+    { name: "Pipeline", href: "/pipeline" },
+    { name: "Dashboard", href: "/dashboard" },
     { name: "Solutions", href: "#solutions" },
     { name: "Use Cases", href: "#use-cases" },
     { name: "Developers", href: "#developers" },
-    { name: "Resources", href: "#resources" },
-    { name: "Pricing", href: "#pricing" },
   ];
 
   return (
