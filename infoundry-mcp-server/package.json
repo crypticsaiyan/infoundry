@@ -13,7 +13,7 @@
     "dev": "tsx src/index.ts"
   },
   "keywords": ["mcp", "cline", "terraform", "cloud-architecture"],
-  "license": "Apache-2.0",
+  "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.22.0"
