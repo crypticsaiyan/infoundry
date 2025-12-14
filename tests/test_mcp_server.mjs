@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Test script for InFoundry MCP Server - All 9 Workflow Steps
+ * MCP Server Integration Test
+ * Tests all 9 InFoundry workflow tools via the MCP protocol
  */
 
 import { spawn } from 'child_process';
@@ -11,9 +12,10 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, '..');
+const mcpServerDir = path.join(projectRoot, 'infoundry-mcp-server');
 
 const server = spawn('node', ['dist/index.js'], {
-  cwd: __dirname,
+  cwd: mcpServerDir,
   stdio: ['pipe', 'pipe', 'pipe']
 });
 

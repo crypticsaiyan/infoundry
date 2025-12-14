@@ -61,5 +61,6 @@ cline "Create a PR with the IaC files"
 ## Test
 
 ```bash
-node test-all-tools.mjs
+# From project root:
+node tests/test_mcp_server.mjs
 ```

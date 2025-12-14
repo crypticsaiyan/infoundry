@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   pull_request:
@@ -6,25 +6,57 @@ on:
     branches: [main, dev]
 
 jobs:
-  test:
+  test-python:
+    name: Python Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Python deps
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi uvicorn pytest
-      - name: Run unit tests (placeholder)
-        run: |
-          pytest || true
-      - name: Terraform fmt/validate (placeholder)
-        run: |
-          echo "terraform fmt/validate would run here"
-      - name: Secret scan (placeholder)
-        run: |
-          echo "gitleaks/trufflehog would run here"
+          pip install -r requirements.txt
 
+      - name: Run Python tests
+        run: pytest tests/ -v --ignore=tests/test_kestra.js --ignore=tests/test-all-tools.mjs
+
+  test-mcp-server:
+    name: MCP Server Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install and build MCP server
+        working-directory: infoundry-mcp-server
+        run: |
+          npm ci
+          npm run build
+
+  lint-ui:
+    name: UI Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Run linter
+        working-directory: ui
+        run: npm run lint || true # Don't fail on lint warnings
