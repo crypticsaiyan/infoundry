@@ -8,18 +8,11 @@ import StepProgressBar from '@/components/StepProgressBar';
 import StepOutputCard from '@/components/StepOutputCard';
 import styles from './page.module.css';
 
-// Pipeline step definitions
-const PIPELINE_STEPS = [
-  { id: 'ingest_repo', label: 'Ingest Repo', order: 1 },
-  { id: 'ingest_telemetry', label: 'Telemetry', order: 2 },
-  { id: 'propose_architecture', label: 'Propose Arch', order: 3 },
-  { id: 'render_graph', label: 'Render Graph', order: 4 },
-  { id: 'generate_iac', label: 'Generate IaC', order: 5 },
-  { id: 'validate_iac', label: 'Validate IaC', order: 6 },
-  { id: 'create_pr', label: 'Create PR', order: 7 },
-  { id: 'validate_pr', label: 'Validate PR', order: 8 },
-  { id: 'evaluate', label: 'Evaluate', order: 9 },
-];
+import StepOutputCard from '@/components/StepOutputCard';
+import styles from './page.module.css';
+import { PIPELINE_STEPS } from '@/lib/kestra';
+
+const POLL_INTERVAL = 2000; // 2 seconds
 
 const POLL_INTERVAL = 2000; // 2 seconds
 
