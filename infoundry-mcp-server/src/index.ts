@@ -3,13 +3,22 @@
  * InFoundry MCP Server
  * 
  * Exposes cloud architecture tools to Cline via Model Context Protocol.
- * Tools: analyze_repo, propose_architecture, generate_iac, validate_iac
+ * Tools mirror the InFoundry Kestra pipeline exactly:
+ * 1. ingest_repo - Analyze repository
+ * 2. ingest_telemetry - Collect service telemetry
+ * 3. propose_architecture - AI architecture proposal (Oumi)
+ * 4. render_graph - Convert architecture to React Flow graph
+ * 5. generate_iac - Generate Terraform from graph
+ * 6. validate_iac - Validate Terraform
+ * 7. create_pr - Create GitHub PR with IaC
+ * 8. validate_pr - Check PR status and reviews
+ * 9. evaluate - AI evaluation of deployment results
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { execFileSync, spawnSync } from "child_process";
+import { spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -20,20 +29,16 @@ const server = new McpServer({
 
 /**
  * Validate and sanitize a path to prevent command injection.
- * Returns the resolved absolute path or throws if invalid.
  */
 function validatePath(inputPath: string): string {
-  // Resolve to absolute path
   const resolved = path.resolve(inputPath);
   
-  // Check for dangerous patterns
   if (inputPath.includes(';') || inputPath.includes('&&') || 
       inputPath.includes('|') || inputPath.includes('`') ||
       inputPath.includes('$(') || inputPath.includes('\n')) {
     throw new Error(`Invalid path: contains dangerous characters`);
   }
   
-  // Verify the path exists and is a directory
   if (!fs.existsSync(resolved)) {
     throw new Error(`Path does not exist: ${resolved}`);
   }
@@ -46,60 +51,79 @@ function validatePath(inputPath: string): string {
   return resolved;
 }
 
-// ============== TOOL: analyze_repo ==============
+// ============== STEP 1: ingest_repo ==============
 server.tool(
-  "analyze_repo",
-  "Analyze a codebase to detect services, databases, and API endpoints",
+  "ingest_repo",
+  "Analyze a repository to detect services, databases, and queues. Supports local paths or GitHub URLs.",
   {
-    repoPath: z.string().describe("Path to the repository to analyze"),
+    repoPath: z.string().describe("Local path OR GitHub URL (e.g., https://github.com/owner/repo)"),
   },
   async ({ repoPath }) => {
     const services: Record<string, any> = {};
     const databases: string[] = [];
     const queues: string[] = [];
+    let tempDir: string | null = null;
+    let analyzePath: string;
+    let primaryLanguage = "unknown";
+    let sourceUrl = repoPath;
 
     try {
-      // Validate path to prevent command injection
-      const safePath = validatePath(repoPath);
+      const githubMatch = repoPath.match(/^https?:\/\/github\.com\/([^\/]+)\/([^\/]+?)(\.git)?$/);
       
-      // Use execFileSync with argument array to prevent shell injection
-      // Find package.json files (Node.js services)
+      if (githubMatch) {
+        const owner = githubMatch[1];
+        const repo = githubMatch[2];
+        tempDir = `/tmp/infoundry-analyze-${owner}-${repo}-${Date.now()}`;
+        
+        const cloneResult = spawnSync('git', ['clone', '--depth', '1', repoPath, tempDir], {
+          encoding: 'utf-8',
+          timeout: 60000,
+        });
+        
+        if (cloneResult.status !== 0) {
+          throw new Error(`Failed to clone repository: ${cloneResult.stderr}`);
+        }
+        
+        analyzePath = tempDir;
+      } else {
+        analyzePath = validatePath(repoPath);
+        sourceUrl = "local";
+      }
+      
+      // Find Node.js services
       const findResult = spawnSync('find', [
-        safePath,
-        '-name', 'package.json',
-        '-not', '-path', '*/node_modules/*'
+        analyzePath, '-name', 'package.json',
+        '-not', '-path', '*/node_modules/*', '-not', '-path', '*/.git/*'
       ], { encoding: 'utf-8', timeout: 30000 });
       
       const packageJsons = (findResult.stdout || '').trim().split('\n').filter(Boolean);
-
       for (const pkg of packageJsons) {
         const dir = path.dirname(pkg);
         const name = path.basename(dir);
-        // Use resolved paths to properly exclude repo root
-        if (path.resolve(dir) !== path.resolve(safePath) && name !== '.') {
-          services[name] = { type: 'nodejs', path: dir };
+        if (path.resolve(dir) !== path.resolve(analyzePath) && name !== '.' && !name.startsWith('.')) {
+          services[name] = { type: 'nodejs', path: dir.replace(tempDir || '', '') };
+          primaryLanguage = "nodejs";
         }
       }
 
-      // Find Python services using argument array
+      // Find Python services
       const pythonResult = spawnSync('find', [
-        safePath,
-        '(', '-name', 'main.py', '-o', '-name', 'app.py', '-o', '-name', 'serve.py', ')'
+        analyzePath, '(', '-name', 'main.py', '-o', '-name', 'app.py', '-o', '-name', 'serve.py', ')',
+        '-not', '-path', '*/.git/*', '-not', '-path', '*/venv/*', '-not', '-path', '*/site-packages/*'
       ], { encoding: 'utf-8', timeout: 30000 });
       
       const pythonApps = (pythonResult.stdout || '').trim().split('\n').filter(Boolean);
-
       for (const app of pythonApps) {
         const dir = path.dirname(app);
         const name = path.basename(dir);
-        // Use resolved paths to properly exclude repo root
-        if (!services[name] && path.resolve(dir) !== path.resolve(safePath) && name !== '.') {
-          services[name] = { type: 'python', path: dir };
+        if (!services[name] && path.resolve(dir) !== path.resolve(analyzePath) && name !== '.') {
+          services[name] = { type: 'python', path: dir.replace(tempDir || '', '') };
+          if (primaryLanguage === "unknown") primaryLanguage = "python";
         }
       }
 
-      // Detect databases from docker-compose (file read is safe)
-      const dockerCompose = path.join(safePath, 'docker-compose.yml');
+      // Detect databases/queues from docker-compose
+      const dockerCompose = path.join(analyzePath, 'docker-compose.yml');
       if (fs.existsSync(dockerCompose)) {
         const content = fs.readFileSync(dockerCompose, 'utf-8');
         if (content.includes('postgres')) databases.push('postgres');
@@ -110,182 +134,316 @@ server.tool(
       }
 
       const profile = {
+        source: sourceUrl,
         services,
         databases,
         queues,
-        serviceCount: Object.keys(services).length,
-        hasInfrastructure: fs.existsSync(path.join(safePath, 'infra')),
-        analyzedAt: new Date().toISOString(),
+        service_count: Object.keys(services).length,
+        primary_language: primaryLanguage,
+        has_infrastructure: fs.existsSync(path.join(analyzePath, 'infra')) || fs.existsSync(path.join(analyzePath, 'terraform')),
+        analyzed_at: new Date().toISOString(),
       };
 
-      return {
-        content: [{ type: 'text', text: JSON.stringify(profile, null, 2) }],
-      };
+      if (tempDir && fs.existsSync(tempDir)) {
+        spawnSync('rm', ['-rf', tempDir], { timeout: 10000 });
+      }
+
+      return { content: [{ type: 'text', text: JSON.stringify(profile, null, 2) }] };
     } catch (error) {
-      return {
-        content: [{ type: 'text', text: `Error analyzing repo: ${error}` }],
-        isError: true,
-      };
+      if (tempDir && fs.existsSync(tempDir)) {
+        spawnSync('rm', ['-rf', tempDir], { timeout: 10000 });
+      }
+      return { content: [{ type: 'text', text: `Error: ${error}` }], isError: true };
     }
   }
 );
 
-// ============== TOOL: propose_architecture ==============
+// ============== STEP 2: ingest_telemetry ==============
+server.tool(
+  "ingest_telemetry",
+  "Collect and summarize service telemetry metrics (latency, error rate, CPU, memory)",
+  {
+    services: z.string().describe("Comma-separated service names to collect telemetry for"),
+    metricsJson: z.string().optional().describe("Optional JSON with real metrics, otherwise generates mock data"),
+  },
+  async ({ services, metricsJson }) => {
+    try {
+      const serviceList = services.split(',').map(s => s.trim()).filter(Boolean);
+      let summary: Record<string, any> = {};
+
+      if (metricsJson) {
+        summary = JSON.parse(metricsJson);
+      } else {
+        // Generate mock telemetry for demo
+        for (const service of serviceList) {
+          summary[service] = {
+            p50: Math.floor(Math.random() * 200) + 50,
+            p95: Math.floor(Math.random() * 400) + 150,
+            avg_latency: Math.floor(Math.random() * 250) + 80,
+            error_rate: Math.random() * 0.05,
+            cost: Math.floor(Math.random() * 80) + 20,
+            cpu_usage: Math.random() * 0.8 + 0.1,
+            memory_mb: Math.floor(Math.random() * 512) + 128,
+          };
+        }
+      }
+
+      const result = {
+        summary,
+        collected_at: new Date().toISOString(),
+        source: metricsJson ? "provided" : "mock",
+      };
+
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `Error: ${error}` }], isError: true };
+    }
+  }
+);
+
+// ============== STEP 3: propose_architecture ==============
 server.tool(
   "propose_architecture",
-  "Propose optimal cloud architecture using InFoundry's Oumi model",
+  "Propose optimal cloud architecture using InFoundry's Oumi AI model",
   {
-    serviceProfile: z.string().describe("JSON string of service profile from analyze_repo"),
-    cloudProvider: z.string().optional().describe("Target cloud: aws, gcp, or azure"),
+    serviceProfile: z.string().describe("JSON string of service profile from ingest_repo"),
+    telemetrySummary: z.string().optional().describe("JSON string of telemetry from ingest_telemetry"),
+    cloudProvider: z.string().optional().describe("Target cloud: aws, gcp, or azure (default: aws)"),
   },
-  async ({ serviceProfile, cloudProvider = "aws" }) => {
-    // Helper function to build heuristic architecture
-    function buildHeuristicArchitecture(serviceCount: number, profile: any, cloudProvider: string) {
-      let pattern: string;
-      let components: string[];
-
-      if (serviceCount <= 2) {
-        pattern = "serverless";
-        components = ["api_gateway", "lambda_functions", "dynamodb"];
-      } else if (serviceCount > 4) {
-        pattern = "kubernetes";
-        components = ["eks_cluster", "alb", "rds", "elasticache"];
-      } else {
-        pattern = "microservices_ecs";
-        components = ["ecs_cluster", "alb", "rds"];
-      }
-
-      if (profile.databases?.includes("postgres")) {
-        if (!components.includes("rds")) components.push("rds");
-      }
-      if (profile.queues?.includes("redis")) {
-        components.push("elasticache");
-      }
-
-      return {
-        pattern,
-        components,
-        topology: `${serviceCount} services with ${pattern} on ${cloudProvider}`,
-        scaling_strategy: serviceCount > 3 ? "horizontal_autoscaling" : "vertical_scaling",
-        estimated_cost_tier: serviceCount > 4 ? "high" : serviceCount > 2 ? "medium" : "low",
-        rationale: `Selected ${pattern} for ${serviceCount} services on ${cloudProvider}`,
-        source: "heuristic",
-      };
-    }
-
+  async ({ serviceProfile, telemetrySummary, cloudProvider = "aws" }) => {
     try {
       const profile = JSON.parse(serviceProfile);
-      const serviceCount = profile.serviceCount || Object.keys(profile.services || {}).length;
+      const serviceCount = profile.service_count || Object.keys(profile.services || {}).length;
+      const hasDatabase = (profile.databases?.length || 0) > 0;
+      const hasQueue = (profile.queues?.length || 0) > 0;
 
       let architecture: any = null;
       
-      // Try to call local Oumi server first
+      // Try Oumi model first (OpenAI-compatible endpoint)
       try {
-        const response = await fetch("http://localhost:8000/recommend", {
+        const prompt = `Recommend cloud architecture for: ${serviceCount} services, ${cloudProvider}, ${hasDatabase ? 'with database' : 'no database'}, ${hasQueue ? 'with queue' : 'no queue'}`;
+        
+        const response = await fetch("http://localhost:8000/v1/chat/completions", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            service_count: serviceCount,
-            cloud_provider: cloudProvider,
-            has_database: profile.databases?.length > 0,
-            has_queue: profile.queues?.length > 0,
+            model: "oumi",
+            messages: [{ role: "user", content: prompt }],
           }),
         });
         
         if (response.ok) {
-          // Wrap JSON parsing in try/catch
-          try {
-            architecture = await response.json();
-            architecture.source = "oumi_model";
-          } catch {
-            // JSON parse error - fall through to heuristic
-            architecture = null;
+          const result = await response.json();
+          const content = result.choices?.[0]?.message?.content;
+          if (content) {
+            try {
+              // Parse JSON from response
+              const jsonMatch = content.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                architecture = JSON.parse(jsonMatch[0]);
+                architecture.source = "oumi";
+              }
+            } catch {
+              // JSON parse failed, use heuristic
+            }
           }
         }
-        // If response.ok is false, architecture remains null and fallback runs
       } catch {
-        // Network/fetch error - architecture remains null
+        // Oumi not available
       }
       
-      // Fallback to heuristics if Oumi didn't return valid architecture
+      // Fallback to heuristics
       if (!architecture) {
-        architecture = buildHeuristicArchitecture(serviceCount, profile, cloudProvider);
+        let pattern: string;
+        let components: string[];
+
+        if (serviceCount <= 2) {
+          pattern = "serverless";
+          components = ["api_gateway", "lambda_functions", "dynamodb"];
+        } else if (serviceCount > 4) {
+          pattern = "kubernetes";
+          components = ["eks_cluster", "alb", "rds", "elasticache"];
+        } else {
+          pattern = "microservices_ecs";
+          components = ["ecs_cluster", "alb", "rds"];
+        }
+
+        if (hasDatabase && !components.includes("rds")) components.push("rds");
+        if (hasQueue) components.push("sqs");
+
+        architecture = {
+          pattern,
+          components,
+          topology: `${serviceCount} services with ${pattern} on ${cloudProvider}`,
+          scaling_strategy: serviceCount > 3 ? "horizontal_autoscaling" : "vertical_scaling",
+          estimated_cost_tier: serviceCount > 4 ? "high" : serviceCount > 2 ? "medium" : "low",
+          rationale: `Selected ${pattern} for ${serviceCount} services with ${hasDatabase ? 'database' : 'no database'}`,
+          source: "heuristic",
+        };
       }
 
-      return {
-        content: [{ type: "text", text: JSON.stringify(architecture, null, 2) }],
+      const result = {
+        architecture,
+        inputs: {
+          service_count: serviceCount,
+          cloud_provider: cloudProvider,
+          primary_language: profile.primary_language || "unknown",
+        },
+        source: architecture.source,
+        proposed_at: new Date().toISOString(),
       };
+
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
-      return {
-        content: [{ type: "text", text: `Error: ${error}` }],
-        isError: true,
-      };
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
     }
   }
 );
 
-// ============== TOOL: generate_iac ==============
+// ============== STEP 4: render_graph ==============
 server.tool(
-  "generate_iac",
-  "Generate Terraform IaC from architecture proposal",
+  "render_graph",
+  "Convert architecture plan to React Flow graph format for UI visualization",
   {
-    architecture: z.string().describe("JSON string of architecture from propose_architecture"),
-    outputDir: z.string().describe("Directory to write generated Terraform files"),
+    architecturePlan: z.string().describe("JSON string of architecture plan from propose_architecture"),
   },
-  async ({ architecture, outputDir }) => {
+  async ({ architecturePlan }) => {
     try {
-      const arch = JSON.parse(architecture);
+      const plan = JSON.parse(architecturePlan);
+      const arch = plan.architecture || plan;
       const components: string[] = arch.components || [];
       const pattern = arch.pattern || "unknown";
+      const scalingStrategy = arch.scaling_strategy || "vertical_scaling";
 
-      // Validate output path - create if doesn't exist
-      const resolvedDir = path.resolve(outputDir);
-      if (outputDir.includes(';') || outputDir.includes('&&') || outputDir.includes('|')) {
-        throw new Error("Invalid output directory path");
+      // Component styling
+      const STYLES: Record<string, { icon: string; color: string; category: string; tier: number }> = {
+        api_gateway: { icon: "globe", color: "#FF9800", category: "network", tier: 1 },
+        alb: { icon: "share-2", color: "#2196F3", category: "network", tier: 1 },
+        ecs_cluster: { icon: "box", color: "#4CAF50", category: "compute", tier: 2 },
+        eks_cluster: { icon: "layers", color: "#9C27B0", category: "compute", tier: 2 },
+        lambda_functions: { icon: "zap", color: "#FF5722", category: "compute", tier: 2 },
+        rds: { icon: "database", color: "#3F51B5", category: "database", tier: 3 },
+        dynamodb: { icon: "grid", color: "#009688", category: "database", tier: 3 },
+        elasticache: { icon: "cpu", color: "#E91E63", category: "cache", tier: 3 },
+        sqs: { icon: "mail", color: "#607D8B", category: "messaging", tier: 3 },
+        s3: { icon: "archive", color: "#795548", category: "storage", tier: 3 },
+      };
+
+      // Create nodes
+      const byTier: Record<number, string[]> = {};
+      for (const comp of components) {
+        const style = STYLES[comp] || { tier: 5 };
+        byTier[style.tier] = byTier[style.tier] || [];
+        byTier[style.tier].push(comp);
       }
-      
-      fs.mkdirSync(resolvedDir, { recursive: true });
 
-      // Complete, valid Terraform templates
-      const templates: Record<string, string> = {
-        api_gateway: `resource "aws_api_gateway_rest_api" "main" {
-  name        = "infoundry-api"
-  description = "InFoundry API Gateway"
-}`,
+      let xOffset = 0;
+      const nodes: any[] = [];
+      const positions: Record<string, { x: number; y: number }> = {};
 
-        lambda_functions: `resource "aws_iam_role" "lambda" {
-  name = "infoundry-lambda-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "lambda.amazonaws.com" }
-    }]
-  })
-}
+      for (const tier of Object.keys(byTier).map(Number).sort()) {
+        const tierComps = byTier[tier];
+        const startY = -(tierComps.length * 150) / 2 + 75;
+        tierComps.forEach((comp, i) => {
+          positions[comp] = { x: xOffset, y: startY + i * 150 };
+        });
+        xOffset += 280;
+      }
 
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
+      for (const comp of components) {
+        const style = STYLES[comp] || { icon: "box", color: "#999", category: "other", tier: 5 };
+        nodes.push({
+          id: comp,
+          type: "infrastructureNode",
+          data: {
+            label: comp.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            type: comp,
+            icon: style.icon,
+            category: style.category,
+          },
+          position: positions[comp] || { x: 0, y: 0 },
+          style: { background: style.color, borderRadius: "8px" },
+        });
+      }
 
-resource "aws_lambda_function" "main" {
-  function_name = "infoundry-handler"
-  role          = aws_iam_role.lambda.arn
-  runtime       = "python3.11"
-  handler       = "main.handler"
-  filename      = var.lambda_zip_path
-  
-  environment {
-    variables = {
-      ENVIRONMENT = var.environment
+      // Create edges
+      const EDGES: Record<string, string[]> = {
+        api_gateway: ["lambda_functions", "ecs_cluster", "eks_cluster"],
+        alb: ["ecs_cluster", "eks_cluster"],
+        ecs_cluster: ["rds", "elasticache", "dynamodb", "sqs", "s3"],
+        eks_cluster: ["rds", "elasticache", "dynamodb", "sqs", "s3"],
+        lambda_functions: ["dynamodb", "s3", "sqs", "rds"],
+      };
+
+      const edges: any[] = [];
+      const compSet = new Set(components);
+      let edgeId = 0;
+
+      for (const [source, targets] of Object.entries(EDGES)) {
+        if (compSet.has(source)) {
+          for (const target of targets) {
+            if (compSet.has(target)) {
+              edges.push({
+                id: `e${edgeId++}`,
+                source,
+                target,
+                type: "smoothstep",
+                animated: source === "api_gateway" || source === "alb",
+              });
+            }
+          }
+        }
+      }
+
+      const graph = {
+        nodes,
+        edges,
+        metadata: {
+          pattern,
+          scaling_strategy: scalingStrategy,
+          component_count: nodes.length,
+          edge_count: edges.length,
+          source: plan.source || "unknown",
+          cloud_provider: plan.inputs?.cloud_provider || "aws",
+          generated_at: new Date().toISOString(),
+        },
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(graph, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
     }
   }
-}`,
+);
 
+// ============== STEP 5: generate_iac ==============
+server.tool(
+  "generate_iac",
+  "Generate Terraform IaC from architecture graph",
+  {
+    graph: z.string().describe("JSON string of graph from render_graph"),
+    cloudProvider: z.string().optional().describe("Cloud provider (default: aws)"),
+    projectName: z.string().optional().describe("Project name for resource naming"),
+    outputDir: z.string().optional().describe("Directory to write files (if provided, writes to disk)"),
+  },
+  async ({ graph, cloudProvider = "aws", projectName = "infoundry", outputDir }) => {
+    try {
+      const graphData = JSON.parse(graph);
+      const components = graphData.nodes?.map((n: any) => n.id) || graphData.metadata?.components || [];
+      const pattern = graphData.metadata?.pattern || "unknown";
+
+      const templates: Record<string, string> = {
+        api_gateway: `resource "aws_api_gateway_rest_api" "main" {
+  name = "${projectName}-api"
+}`,
+        lambda_functions: `resource "aws_lambda_function" "main" {
+  function_name = "${projectName}-handler"
+  runtime       = "python3.11"
+  handler       = "main.handler"
+  role          = aws_iam_role.lambda.arn
+}`,
         dynamodb: `resource "aws_dynamodb_table" "main" {
-  name         = "infoundry-data"
+  name         = "${projectName}-data"
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
@@ -293,104 +451,51 @@ resource "aws_lambda_function" "main" {
     name = "id"
     type = "S"
   }
-
-  tags = {
-    Environment = var.environment
-  }
 }`,
-
         ecs_cluster: `resource "aws_ecs_cluster" "main" {
-  name = "infoundry-cluster"
-
-  setting {
-    name  = "containerInsights"
-    value = "enabled"
-  }
-
-  tags = {
-    Environment = var.environment
-  }
+  name = "${projectName}-cluster"
 }`,
-
-        eks_cluster: `resource "aws_iam_role" "eks" {
-  name = "infoundry-eks-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "eks.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "eks_cluster" {
-  role       = aws_iam_role.eks.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-}
-
-resource "aws_eks_cluster" "main" {
-  name     = "infoundry-eks"
+        eks_cluster: `resource "aws_eks_cluster" "main" {
+  name     = "${projectName}-eks"
   role_arn = aws_iam_role.eks.arn
 
   vpc_config {
     subnet_ids = var.subnet_ids
   }
-
-  depends_on = [aws_iam_role_policy_attachment.eks_cluster]
 }`,
-
         alb: `resource "aws_lb" "main" {
-  name               = "infoundry-alb"
-  internal           = false
+  name               = "${projectName}-alb"
   load_balancer_type = "application"
   subnets            = var.public_subnet_ids
-
-  tags = {
-    Environment = var.environment
-  }
 }`,
-
         rds: `resource "aws_db_instance" "main" {
-  identifier           = "infoundry-db"
-  engine               = "postgres"
-  engine_version       = "15"
-  instance_class       = var.db_instance_class
-  allocated_storage    = 20
-  db_name              = "infoundry"
-  username             = var.db_username
-  password             = var.db_password
-  skip_final_snapshot  = true
-  publicly_accessible  = false
-
-  tags = {
-    Environment = var.environment
-  }
+  identifier          = "${projectName}-db"
+  engine              = "postgres"
+  instance_class      = var.db_instance_class
+  username            = var.db_username
+  password            = var.db_password
+  skip_final_snapshot = true
 }`,
-
         elasticache: `resource "aws_elasticache_cluster" "main" {
-  cluster_id           = "infoundry-cache"
-  engine               = "redis"
-  engine_version       = "7.0"
-  node_type            = var.cache_node_type
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
-  port                 = 6379
-
-  tags = {
-    Environment = var.environment
-  }
+  cluster_id      = "${projectName}-cache"
+  engine          = "redis"
+  node_type       = "cache.t3.micro"
+  num_cache_nodes = 1
+}`,
+        sqs: `resource "aws_sqs_queue" "main" {
+  name = "${projectName}-queue"
+}`,
+        s3: `resource "aws_s3_bucket" "main" {
+  bucket = "${projectName}-storage"
 }`,
       };
 
-      // Build main.tf
-      let mainTf = `# Generated by InFoundry Architect
+      let mainTf = `# Generated by InFoundry
 # Pattern: ${pattern}
-# Generated: ${new Date().toISOString()}
 
 terraform {
   required_version = ">= 1.0"
-  
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -402,224 +507,372 @@ terraform {
 provider "aws" {
   region = var.aws_region
 }
-
 `;
 
-      for (const component of components) {
-        if (templates[component]) {
-          mainTf += `\n# ============ ${component.toUpperCase()} ============\n${templates[component]}\n`;
+      for (const comp of components) {
+        if (templates[comp]) {
+          mainTf += `\n# ${comp.toUpperCase()}\n${templates[comp]}\n`;
         }
       }
 
-      // Build variables.tf with all required variables
-      let variablesTf = `# Variables for InFoundry Infrastructure
-# Pattern: ${pattern}
-
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
+      const variablesTf = `variable "aws_region" {
+  default = "us-east-1"
 }
 
 variable "environment" {
-  description = "Environment name"
-  type        = string
-  default     = "dev"
+  default = "dev"
 }
 
-`;
-
-      // Add component-specific variables
-      if (components.includes('lambda_functions')) {
-        variablesTf += `variable "lambda_zip_path" {
-  description = "Path to Lambda deployment package"
-  type        = string
-  default     = "lambda.zip"
-}
-
-`;
-      }
-
-      if (components.includes('eks_cluster') || components.includes('ecs_cluster')) {
-        variablesTf += `variable "subnet_ids" {
-  description = "Subnet IDs for EKS/ECS"
-  type        = list(string)
-  default     = []
-}
-
-`;
-      }
-
-      if (components.includes('alb')) {
-        variablesTf += `variable "public_subnet_ids" {
-  description = "Public subnet IDs for ALB"
-  type        = list(string)
-  default     = []
-}
-
-`;
-      }
-
-      if (components.includes('rds')) {
-        variablesTf += `variable "db_instance_class" {
-  description = "RDS instance class"
-  type        = string
-  default     = "db.t3.micro"
+variable "db_instance_class" {
+  default = "db.t3.micro"
 }
 
 variable "db_username" {
-  description = "Database master username - provide via tfvars or TF_VAR_db_username"
-  type        = string
-  sensitive   = true
-  # No default - must be provided via tfvars or environment variable
+  sensitive = true
 }
 
 variable "db_password" {
-  description = "Database master password - provide via tfvars or TF_VAR_db_password"
-  type        = string
-  sensitive   = true
-  # No default - must be provided via tfvars or environment variable
+  sensitive = true
 }
 
-`;
-      }
-
-      if (components.includes('elasticache')) {
-        variablesTf += `variable "cache_node_type" {
-  description = "ElastiCache node type"
-  type        = string
-  default     = "cache.t3.micro"
+variable "subnet_ids" {
+  type    = list(string)
+  default = []
 }
 
+variable "public_subnet_ids" {
+  type    = list(string)
+  default = []
+}
 `;
-      }
 
-      // Build outputs.tf only for generated resources
-      let outputsTf = `# Outputs for InFoundry Infrastructure\n\n`;
-      
-      const outputMap: Record<string, string> = {
-        api_gateway: `output "api_gateway_id" {\n  description = "API Gateway ID"\n  value       = aws_api_gateway_rest_api.main.id\n}\n`,
-        lambda_functions: `output "lambda_function_arn" {\n  description = "Lambda function ARN"\n  value       = aws_lambda_function.main.arn\n}\n`,
-        dynamodb: `output "dynamodb_table_name" {\n  description = "DynamoDB table name"\n  value       = aws_dynamodb_table.main.name\n}\n`,
-        ecs_cluster: `output "ecs_cluster_arn" {\n  description = "ECS cluster ARN"\n  value       = aws_ecs_cluster.main.arn\n}\n`,
-        eks_cluster: `output "eks_cluster_endpoint" {\n  description = "EKS cluster endpoint"\n  value       = aws_eks_cluster.main.endpoint\n}\n`,
-        alb: `output "alb_dns_name" {\n  description = "ALB DNS name"\n  value       = aws_lb.main.dns_name\n}\n`,
-        rds: `output "rds_endpoint" {\n  description = "RDS endpoint"\n  value       = aws_db_instance.main.endpoint\n}\n`,
-        elasticache: `output "elasticache_endpoint" {\n  description = "ElastiCache endpoint"\n  value       = aws_elasticache_cluster.main.cache_nodes[0].address\n}\n`,
+      const result: any = {
+        success: true,
+        pattern,
+        components,
+        files: {
+          "main.tf": mainTf,
+          "variables.tf": variablesTf,
+        },
+        generated_at: new Date().toISOString(),
       };
 
-      for (const component of components) {
-        if (outputMap[component]) {
-          outputsTf += outputMap[component] + '\n';
-        }
+      if (outputDir) {
+        const resolvedDir = path.resolve(outputDir);
+        fs.mkdirSync(resolvedDir, { recursive: true });
+        fs.writeFileSync(path.join(resolvedDir, "main.tf"), mainTf);
+        fs.writeFileSync(path.join(resolvedDir, "variables.tf"), variablesTf);
+        result.output_dir = resolvedDir;
       }
 
-      fs.writeFileSync(path.join(resolvedDir, "main.tf"), mainTf);
-      fs.writeFileSync(path.join(resolvedDir, "variables.tf"), variablesTf);
-      fs.writeFileSync(path.join(resolvedDir, "outputs.tf"), outputsTf);
-
-      return {
-        content: [{ type: "text", text: JSON.stringify({ success: true, outputDir: resolvedDir, files: ["main.tf", "variables.tf", "outputs.tf"], pattern, components }, null, 2) }],
-      };
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
-      return {
-        content: [{ type: "text", text: `Error: ${error}` }],
-        isError: true,
-      };
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
     }
   }
 );
 
-// ============== TOOL: validate_iac ==============
+// ============== STEP 6: validate_iac ==============
 server.tool(
   "validate_iac",
-  "Validate generated Terraform using terraform validate and tflint",
+  "Validate Terraform with fmt, init, validate, and optional tflint",
   {
     iacDir: z.string().describe("Directory containing Terraform files"),
   },
   async ({ iacDir }) => {
-    const results: Record<string, any> = { terraform_fmt: null, terraform_validate: null, tflint: null };
+    const results: Record<string, any> = {};
 
     try {
-      // Validate path to prevent command injection
       const safePath = validatePath(iacDir);
-      
-      // terraform fmt check - using execFileSync with argument array
+
+      // terraform fmt
       try {
-        execFileSync('terraform', ['fmt', '-check', '-recursive', safePath], { encoding: 'utf-8' });
-        results.terraform_fmt = { success: true, message: "Format check passed" };
+        const fmtResult = spawnSync('terraform', ['fmt', '-check', '-recursive'], { cwd: safePath, encoding: 'utf-8' });
+        results.terraform_fmt = { success: fmtResult.status === 0, message: fmtResult.status === 0 ? "Passed" : "Needs formatting" };
       } catch (e: any) {
         results.terraform_fmt = { success: false, message: e.message };
       }
 
-      // terraform init and validate - run in sequence with spawnSync
+      // terraform init + validate
       try {
-        const initResult = spawnSync('terraform', ['init', '-backend=false'], { 
-          cwd: safePath, 
-          encoding: 'utf-8' 
-        });
+        const initResult = spawnSync('terraform', ['init', '-backend=false'], { cwd: safePath, encoding: 'utf-8' });
         if (initResult.status === 0) {
-          const validateResult = spawnSync('terraform', ['validate'], { 
-            cwd: safePath, 
-            encoding: 'utf-8' 
-          });
-          results.terraform_validate = { 
-            success: validateResult.status === 0, 
-            message: validateResult.status === 0 ? "Validation passed" : validateResult.stderr 
-          };
+          const validateResult = spawnSync('terraform', ['validate'], { cwd: safePath, encoding: 'utf-8' });
+          results.terraform_validate = { success: validateResult.status === 0, message: validateResult.status === 0 ? "Valid" : validateResult.stderr };
         } else {
-          results.terraform_validate = { success: false, message: initResult.stderr };
+          results.terraform_validate = { success: false, message: "Init failed: " + initResult.stderr };
         }
       } catch (e: any) {
         results.terraform_validate = { success: false, message: e.message };
       }
 
-      // tflint - using spawnSync with argument array
+      // tflint (optional)
       try {
-        const lintResult = spawnSync('tflint', ['--format=json'], { 
-          cwd: safePath, 
-          encoding: 'utf-8' 
-        });
-        
-        // Check if tflint binary was not found
-        if (lintResult.error && (lintResult.error as NodeJS.ErrnoException).code === 'ENOENT') {
-          results.tflint = { success: true, skipped: true, message: "tflint not installed" };
-        } else if (lintResult.status === 0) {
-          // Success - parse JSON output
-          try {
-            results.tflint = { success: true, output: JSON.parse(lintResult.stdout || '{}') };
-          } catch {
-            results.tflint = { success: true, output: lintResult.stdout };
-          }
+        const lintResult = spawnSync('tflint', [], { cwd: safePath, encoding: 'utf-8' });
+        if (lintResult.error && (lintResult.error as any).code === 'ENOENT') {
+          results.tflint = { skipped: true, message: "tflint not installed" };
         } else {
-          // Non-zero exit - capture exit code and output
-          results.tflint = { 
-            success: false, 
-            exitCode: lintResult.status,
-            output: lintResult.stdout,
-            error: lintResult.stderr
-          };
+          results.tflint = { success: lintResult.status === 0, output: lintResult.stdout };
         }
-      } catch (e: any) {
-        // Catch any other errors
-        if (e.code === 'ENOENT') {
-          results.tflint = { success: true, skipped: true, message: "tflint not installed" };
-        } else {
-          results.tflint = { success: false, message: e.message };
-        }
+      } catch {
+        results.tflint = { skipped: true, message: "tflint not available" };
       }
 
-      // allPassed treats skipped as not failing
       const allPassed = Object.values(results).every((r: any) => r?.success || r?.skipped);
 
       return {
-        content: [{ type: "text", text: JSON.stringify({ valid: allPassed, checks: results }, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify({
+          valid: allPassed,
+          deploy_status: allPassed ? "validated" : "failed",
+          checks: results,
+          validated_at: new Date().toISOString(),
+        }, null, 2) }],
       };
     } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
+    }
+  }
+);
+
+// ============== STEP 7: create_pr ==============
+server.tool(
+  "create_pr",
+  "Create a GitHub PR with generated IaC files",
+  {
+    repository: z.string().describe("GitHub repository in owner/repo format"),
+    files: z.union([z.string(), z.record(z.string())]).describe("Files as JSON string or object with filename: content pairs"),
+    targetFolder: z.string().optional().describe("Target folder in repo (default: infra)"),
+    baseBranch: z.string().optional().describe("Base branch (default: main)"),
+    labels: z.union([z.string(), z.array(z.string())]).optional().describe("Labels to add (comma-separated string or array)"),
+  },
+  async ({ repository, files, targetFolder = "infra", baseBranch = "main", labels }) => {
+    // Handle both string and object input for files
+    const fileMap: Record<string, string> = typeof files === 'string' ? JSON.parse(files) : files;
+    // Handle labels as string or array
+    const labelList: string[] = labels 
+      ? (typeof labels === 'string' ? labels.split(',').map(l => l.trim()) : labels)
+      : ['infoundry', 'infrastructure'];
+    const githubToken = process.env.GITHUB_TOKEN;
+    
+    if (!githubToken) {
       return {
-        content: [{ type: "text", text: `Error: ${error}` }],
+        content: [{ type: "text", text: JSON.stringify({
+          success: false,
+          error: "GITHUB_TOKEN not set",
+          hint: "export GITHUB_TOKEN=ghp_...",
+        }, null, 2) }],
         isError: true,
       };
+    }
+
+    try {
+      const timestamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+      const branch = `infoundry/iac-${timestamp}`;
+      
+      const headers = {
+        "Authorization": `token ${githubToken}`,
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+        "User-Agent": "InFoundry-MCP-Server",
+      };
+
+      const apiBase = `https://api.github.com/repos/${repository}`;
+
+      // Get base SHA
+      const refResponse = await fetch(`${apiBase}/git/refs/heads/${baseBranch}`, { headers });
+      if (!refResponse.ok) throw new Error(`Failed to get base branch`);
+      const refData = await refResponse.json();
+      const baseSha = refData.object.sha;
+
+      // Create branch
+      await fetch(`${apiBase}/git/refs`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ ref: `refs/heads/${branch}`, sha: baseSha }),
+      });
+
+      // Upload files
+      for (const [filename, content] of Object.entries(fileMap)) {
+        const filePath = `${targetFolder}/${filename}`;
+        await fetch(`${apiBase}/contents/${filePath}`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({
+            message: `Add ${filename} via InFoundry`,
+            content: Buffer.from(content as string).toString("base64"),
+            branch,
+          }),
+        });
+      }
+
+      // Create PR
+      const prResponse = await fetch(`${apiBase}/pulls`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          title: `[InFoundry] Infrastructure Update ${timestamp}`,
+          body: "This PR was automatically generated by InFoundry Architect.",
+          head: branch,
+          base: baseBranch,
+        }),
+      });
+
+      if (!prResponse.ok) throw new Error(`Failed to create PR: ${await prResponse.text()}`);
+      const prData = await prResponse.json();
+
+      // Add labels to PR
+      if (labelList.length > 0) {
+        await fetch(`${apiBase}/issues/${prData.number}/labels`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ labels: labelList }),
+        });
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          success: true,
+          pr_url: prData.html_url,
+          pr_number: prData.number,
+          branch,
+          files: Object.keys(fileMap),
+          labels: labelList,
+        }, null, 2) }],
+      };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
+    }
+  }
+);
+
+// ============== STEP 8: validate_pr ==============
+server.tool(
+  "validate_pr",
+  "Check PR status including CI checks and CodeRabbit reviews",
+  {
+    repository: z.string().describe("GitHub repository in owner/repo format"),
+    prNumber: z.number().describe("Pull Request number"),
+  },
+  async ({ repository, prNumber }) => {
+    const githubToken = process.env.GITHUB_TOKEN;
+    const headers: Record<string, string> = {
+      "Accept": "application/vnd.github.v3+json",
+      "User-Agent": "InFoundry-MCP-Server",
+    };
+    if (githubToken) headers["Authorization"] = `token ${githubToken}`;
+
+    try {
+      // Get PR details
+      const prResponse = await fetch(`https://api.github.com/repos/${repository}/pulls/${prNumber}`, { headers });
+      if (!prResponse.ok) throw new Error(`PR not found`);
+      const pr = await prResponse.json();
+
+      // Get CI checks
+      const checksResponse = await fetch(`https://api.github.com/repos/${repository}/commits/${pr.head.sha}/check-runs`, { headers });
+      let checks: any[] = [];
+      if (checksResponse.ok) {
+        const checksData = await checksResponse.json();
+        checks = (checksData.check_runs || []).map((c: any) => ({
+          name: c.name,
+          status: c.status,
+          conclusion: c.conclusion,
+        }));
+      }
+
+      // Get reviews
+      const reviewsResponse = await fetch(`https://api.github.com/repos/${repository}/pulls/${prNumber}/reviews`, { headers });
+      let reviews: any[] = [];
+      if (reviewsResponse.ok) {
+        reviews = (await reviewsResponse.json()).map((r: any) => ({
+          user: r.user?.login,
+          state: r.state,
+        }));
+      }
+
+      const allChecksPassed = checks.every(c => c.conclusion === "success" || c.status !== "completed");
+      const hasApproval = reviews.some(r => r.state === "APPROVED");
+
+      return {
+        content: [{ type: "text", text: JSON.stringify({
+          pr_number: prNumber,
+          state: pr.state,
+          mergeable: pr.mergeable,
+          draft: pr.draft,
+          checks,
+          reviews,
+          all_checks_passed: allChecksPassed,
+          has_approval: hasApproval,
+          ready_to_merge: pr.mergeable && allChecksPassed && !pr.draft,
+          validated_at: new Date().toISOString(),
+        }, null, 2) }],
+      };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
+    }
+  }
+);
+
+// ============== STEP 9: evaluate ==============
+server.tool(
+  "evaluate",
+  "AI evaluation of deployment/validation results with recommendations",
+  {
+    deployResult: z.string().describe("JSON string of validation/deployment result from validate_iac"),
+  },
+  async ({ deployResult }) => {
+    try {
+      const deploy = JSON.parse(deployResult);
+      let score = 0;
+      let recommendation = "review";
+      const feedback: string[] = [];
+      const improvements: string[] = [];
+
+      // Calculate score based on validation results
+      if (deploy.valid || deploy.deploy_status === "validated") {
+        score += 0.5;
+        feedback.push("Terraform validation passed");
+      } else {
+        feedback.push("Terraform validation failed");
+        improvements.push("Fix validation errors before deploying");
+      }
+
+      if (deploy.checks?.terraform_fmt?.success) {
+        score += 0.2;
+      } else {
+        improvements.push("Run 'terraform fmt' to fix formatting");
+      }
+
+      if (deploy.checks?.terraform_validate?.success) {
+        score += 0.2;
+      }
+
+      if (deploy.checks?.tflint?.success || deploy.checks?.tflint?.skipped) {
+        score += 0.1;
+      } else {
+        improvements.push("Address tflint warnings for best practices");
+      }
+
+      // Determine recommendation
+      if (score >= 0.8) {
+        recommendation = "proceed";
+      } else if (score >= 0.5) {
+        recommendation = "review";
+      } else {
+        recommendation = "reject";
+      }
+
+      const result = {
+        score: Math.round(score * 100) / 100,
+        recommendation,
+        feedback: feedback.join(". "),
+        improvements,
+        source: "infoundry-evaluator",
+        evaluated_at: new Date().toISOString(),
+      };
+
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      return { content: [{ type: "text", text: `Error: ${error}` }], isError: true };
     }
   }
 );
@@ -628,7 +881,7 @@ server.tool(
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("InFoundry MCP Server running on stdio");
+  console.error("InFoundry MCP Server running on stdio - 9 workflow tools available");
 }
 
 main().catch(console.error);
