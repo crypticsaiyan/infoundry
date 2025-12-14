@@ -82,6 +82,18 @@ pytest tests/ -v
 node tests/test_mcp_server.mjs
 ```
 
+## Screenshots
+
+| Screenshot | Description |
+|------------|-------------|
+| ![Cline Integration](screenshots/cline.png) | Cline MCP Integration |
+| ![Kestra Flows](screenshots/kestra_flows.png) | Kestra Pipeline Flows |
+| ![OS Overview](screenshots/os.png) | Operating System Overview |
+| ![Screenshot 1](screenshots/swappy-20251214-225628.png) | Application Screenshot |
+| ![Screenshot 2](screenshots/swappy-20251214-225644.png) | Application Screenshot |
+| ![Screenshot 3](screenshots/swappy-20251214-225707.png) | Application Screenshot |
+| ![Screenshot 4](screenshots/swappy-20251214-225830.png) | Application Screenshot |
+
 ## License
 
 Released under the [MIT License](LICENSE).
