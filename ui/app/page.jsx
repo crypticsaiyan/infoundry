@@ -125,6 +125,13 @@ export default function Home() {
               </p>
             </div>
           </div>
+          
+          <div className={styles.configurePromo}>
+            <p>Want to configure your services manually?</p>
+            <Link href="/configure" className={styles.configureLink}>
+              Use the Service Configuration Generator →
+            </Link>
+          </div>
         </section>
 
         {/* CTA Section */}
