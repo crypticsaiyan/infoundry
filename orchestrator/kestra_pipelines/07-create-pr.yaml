@@ -22,13 +22,13 @@ inputs:
 
   - id: target_folder
     type: STRING
-    required: false
+    required: true
     defaults: "infra"
     description: Target folder in repo for Terraform files
 
   - id: labels
     type: STRING
-    required: false
+    required: true
     defaults: "infoundry,infrastructure,terraform"
     description: Comma-separated labels to add to the PR
 
@@ -45,6 +45,7 @@ tasks:
 
       - id: create_pr
         type: io.kestra.plugin.scripts.python.Script
+        timeout: PT5M
         env:
           GITHUB_TOKEN: "{{ kv('GITHUB_TOKEN') }}"
           REPOSITORY: "{{ inputs.repository }}"
