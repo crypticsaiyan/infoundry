@@ -88,7 +88,7 @@ node tests/test_mcp_server.mjs
 |------------|-------------|
 | ![Cline Integration](screenshots/cline.png) | Cline MCP Integration |
 | ![Kestra Flows](screenshots/kestra_flows.png) | Kestra Pipeline Flows |
-| ![OS Overview](screenshots/os.png) | Operating System Overview |
+| ![OS Overview](screenshots/os.png) | Open Source Architecture |
 | ![Screenshot 1](screenshots/swappy-20251214-225628.png) | Application Screenshot |
 | ![Screenshot 2](screenshots/swappy-20251214-225644.png) | Application Screenshot |
 | ![Screenshot 3](screenshots/swappy-20251214-225707.png) | Application Screenshot |
