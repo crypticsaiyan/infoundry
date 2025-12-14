@@ -37,6 +37,8 @@ cd infoundry-mcp-server && npm install && npm run build && cd ..
 ### Run the UI
 ```bash
 cd ui
+cp .env.example .env.local
+# Edit .env.local with your Kestra credentials if needed
 npm run dev
 # Open http://localhost:3000
 ```

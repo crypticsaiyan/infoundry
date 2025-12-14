@@ -29,11 +29,17 @@ Open [http://localhost:3000](http://localhost:3000) to view the dashboard.
 
 ## Environment Variables
 
-Create `.env.local`:
-
-```bash
-KESTRA_API_URL=http://localhost:8080
-```
+Copy `.env.example` to `.env.local` and update the values:
+ 
+ ```bash
+ cp .env.example .env.local
+ ```
+ 
+ Variables:
+ - `KESTRA_API_URL`: URL of the Kestra API (default: `http://localhost:8080`)
+ - `KESTRA_TENANT`: Kestra tenant ID (default: `main`)
+ - `KESTRA_API_TOKEN`: Optional API token for authentication
+ - `KESTRA_USERNAME` / `KESTRA_PASSWORD`: Optional credentials for basic auth
 
 ## Build
 

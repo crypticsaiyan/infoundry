@@ -32,7 +32,10 @@ Add to `~/.config/cline/mcp.json`:
   "mcpServers": {
     "infoundry-architect": {
       "command": "node",
-      "args": ["/path/to/infoundry/infoundry-mcp-server/dist/index.js"]
+      "args": ["/path/to/infoundry/infoundry-mcp-server/dist/index.js"],
+      "env": {
+        "GITHUB_TOKEN": "ghp_YOUR_GITHUB_TOKEN_HERE"
+      }
     }
   }
 }
