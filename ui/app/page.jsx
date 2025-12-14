@@ -1,14 +1,12 @@
 "use client";
 
-import { useState } from "react";
 import Link from "next/link";
-import { ArrowRight, Paperclip, Send, Info } from "lucide-react";
+import { ArrowRight, Zap } from "lucide-react";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import styles from "./page.module.css";
 
 export default function Home() {
-  const [prompt, setPrompt] = useState("");
 
   const useCases = [
     "Cloud Migration",
@@ -50,30 +48,6 @@ export default function Home() {
               infrastructure — from repos to production — with a single prompt.
             </p>
 
-            {/* Prompt Input */}
-            <div className={styles.promptContainer}>
-              <textarea
-                className={styles.promptInput}
-                placeholder="I Automate my cloud infrastructure for a microservices app with auth, payments, and a React frontend..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                rows={2}
-              />
-              <div className={styles.promptActions}>
-                <button className={styles.promptAttach} aria-label="Attach file">
-                  <Paperclip size={20} />
-                </button>
-                <div className={styles.promptRight}>
-                  <button className={styles.promptInfo} aria-label="Info">
-                    <Info size={20} />
-                  </button>
-                  <button className={styles.promptSend} aria-label="Send prompt">
-                    <Send size={20} />
-                  </button>
-                </div>
-              </div>
-            </div>
-
             {/* Use Case Pills */}
             <div className={styles.useCases}>
               {useCases.map((useCase) => (
@@ -81,6 +55,16 @@ export default function Home() {
                   {useCase}
                 </button>
               ))}
+            </div>
+
+            {/* Pipeline CTA */}
+            <div className={styles.pipelineCta}>
+              <Link href="/pipeline" className={styles.pipelineBtn}>
+                <Zap size={18} />
+                <span>Try the Pipeline</span>
+                <ArrowRight size={16} />
+              </Link>
+              <p className={styles.pipelineHint}>Run automated IaC generation with Kestra</p>
             </div>
           </div>
         </section>
@@ -150,11 +134,12 @@ export default function Home() {
             Start designing production-ready infrastructure in minutes.
           </p>
           <div className={styles.ctaButtons}>
-            <Link href="/signup" className={styles.ctaPrimary}>
-              Get Started Free
+            <Link href="/pipeline" className={styles.ctaPrimary}>
+              <Zap size={16} />
+              Launch Pipeline
             </Link>
             <Link href="/dashboard" className={styles.ctaSecondary}>
-              View Demo
+              View Dashboard
             </Link>
           </div>
         </section>

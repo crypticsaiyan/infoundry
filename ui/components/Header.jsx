@@ -20,9 +20,6 @@ export default function Header() {
   const navLinks = [
     { name: "Pipeline", href: "/pipeline" },
     { name: "Dashboard", href: "/dashboard" },
-    { name: "Solutions", href: "#solutions" },
-    { name: "Use Cases", href: "#use-cases" },
-    { name: "Developers", href: "#developers" },
   ];
 
   return (
