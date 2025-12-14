@@ -157,6 +157,39 @@
   background-color: var(--color-bg-tertiary);
 }
 
+/* ===== Pipeline CTA ===== */
+.pipelineCta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-2xl);
+}
+
+.pipelineBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-xl);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-bg-primary);
+  background: linear-gradient(135deg, #ffffff 0%, #e0e0e0 100%);
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 30px rgba(255, 255, 255, 0.3), 0 4px 15px rgba(0, 0, 0, 0.3);
+  transition: all var(--transition-base);
+}
+
+.pipelineBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 40px rgba(255, 255, 255, 0.5), 0 8px 25px rgba(0, 0, 0, 0.4);
+}
+
+.pipelineHint {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
 /* ===== Trusted Section ===== */
 .trusted {
   padding: var(--spacing-3xl) var(--spacing-lg);
@@ -265,6 +298,9 @@
 }
 
 .ctaPrimary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
   font-size: 0.875rem;
   font-weight: 500;
   text-transform: uppercase;

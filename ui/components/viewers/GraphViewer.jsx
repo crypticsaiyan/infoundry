@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ReactFlow,
   Background,
@@ -10,7 +11,28 @@ import {
   MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { ExternalLink, Download, Layers } from 'lucide-react';
 import styles from './GraphViewer.module.css';
+
+// Full service name mapping
+const SERVICE_NAME_MAP = {
+  rds: "Amazon RDS", ec2: "Amazon EC2", ecs: "Amazon ECS", ecs_cluster: "Amazon ECS Cluster",
+  eks: "Amazon EKS", lambda: "AWS Lambda", s3: "Amazon S3", dynamodb: "Amazon DynamoDB",
+  elasticache: "Amazon ElastiCache", sqs: "Amazon SQS", sns: "Amazon SNS",
+  alb: "Application Load Balancer", nlb: "Network Load Balancer", api_gateway: "Amazon API Gateway",
+  cloudfront: "Amazon CloudFront", cdn: "Amazon CloudFront CDN", route53: "Amazon Route 53",
+  vpc: "Amazon VPC", iam: "AWS IAM", cognito: "Amazon Cognito", cloudwatch: "Amazon CloudWatch",
+  efs: "Amazon EFS", ecr: "Amazon ECR", fargate: "AWS Fargate", aurora: "Amazon Aurora",
+  kinesis: "Amazon Kinesis", hpa: "Horizontal Pod Autoscaler",
+};
+
+function getFullServiceName(label, type) {
+  const typeKey = type?.toLowerCase().replace(/[- ]/g, "_");
+  if (SERVICE_NAME_MAP[typeKey]) return SERVICE_NAME_MAP[typeKey];
+  const labelKey = label?.toLowerCase().replace(/[- ]/g, "_");
+  if (SERVICE_NAME_MAP[labelKey]) return SERVICE_NAME_MAP[labelKey];
+  return label || "Service";
+}
 
 // Enhanced icon mapping with categories and colors
 const NODE_TYPES = {
@@ -57,6 +79,7 @@ function InfraNode({ data, selected }) {
   const nodeType = ICON_TO_TYPE[data.icon] || 'default';
   const typeConfig = NODE_TYPES[nodeType] || NODE_TYPES.default;
   const color = data.style?.background || typeConfig.color;
+  const fullName = getFullServiceName(data.label, data.type || data.label);
   
   return (
     <div 
@@ -71,7 +94,7 @@ function InfraNode({ data, selected }) {
         <div className={styles.nodeIconWrapper} style={{ backgroundColor: `${color}20` }}>
           <span className={styles.nodeIcon}>{typeConfig.icon}</span>
         </div>
-        <span className={styles.nodeLabel}>{data.label}</span>
+        <span className={styles.nodeLabel}>{fullName}</span>
         <span className={styles.nodeType}>{typeConfig.label}</span>
       </div>
       <Handle type="source" position={Position.Right} className={styles.handle} />
@@ -157,18 +180,50 @@ export default function GraphViewer({ data, title, height = 350 }) {
       {/* Header */}
       <div className={styles.header}>
         <div className={styles.headerLeft}>
-          <span className={styles.graphIcon}>🔗</span>
+          <Layers size={18} className={styles.graphIcon} />
           <h4 className={styles.title}>{title || 'Architecture Graph'}</h4>
         </div>
-        <div className={styles.headerStats}>
-          <span className={styles.stat}>
-            <span className={styles.statValue}>{nodes.length}</span>
-            <span className={styles.statLabel}>nodes</span>
-          </span>
-          <span className={styles.stat}>
-            <span className={styles.statValue}>{edges.length}</span>
-            <span className={styles.statLabel}>edges</span>
-          </span>
+        <div className={styles.headerRight}>
+          <div className={styles.headerStats}>
+            <span className={styles.stat}>
+              <span className={styles.statValue}>{nodes.length}</span>
+              <span className={styles.statLabel}>nodes</span>
+            </span>
+            <span className={styles.stat}>
+              <span className={styles.statValue}>{edges.length}</span>
+              <span className={styles.statLabel}>edges</span>
+            </span>
+          </div>
+          <div className={styles.headerActions}>
+            <button 
+              className={styles.actionBtn}
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = "graph.json";
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              title="Download graph.json"
+            >
+              <Download size={14} />
+              <span>Download</span>
+            </button>
+            <button 
+              className={styles.dashboardBtn}
+              onClick={() => {
+                // Store graph data in localStorage for dashboard to pick up
+                localStorage.setItem('infoundry_graph', JSON.stringify(data));
+                window.open('/dashboard', '_blank');
+              }}
+              title="Open in Dashboard"
+            >
+              <ExternalLink size={14} />
+              <span>Open in Dashboard</span>
+            </button>
+          </div>
         </div>
       </div>
       
