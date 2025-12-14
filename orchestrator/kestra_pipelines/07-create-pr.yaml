@@ -26,6 +26,12 @@ inputs:
     defaults: "infra"
     description: Target folder in repo for Terraform files
 
+  - id: labels
+    type: STRING
+    required: false
+    defaults: "infoundry,infrastructure,terraform"
+    description: Comma-separated labels to add to the PR
+
 tasks:
   - id: working_dir
     type: io.kestra.plugin.core.flow.WorkingDirectory
@@ -44,6 +50,7 @@ tasks:
           REPOSITORY: "{{ inputs.repository }}"
           BASE_BRANCH: "{{ inputs.base_branch ?? 'main' }}"
           TARGET_FOLDER: "{{ inputs.target_folder ?? 'infra' }}"
+          LABELS: "{{ inputs.labels ?? 'infoundry,infrastructure,terraform' }}"
         script: |
           import json
           import os
@@ -56,6 +63,8 @@ tasks:
           repository = os.environ.get("REPOSITORY", "")
           base_branch = os.environ.get("BASE_BRANCH", "main")
           target_folder = os.environ.get("TARGET_FOLDER", "infra")
+          labels_str = os.environ.get("LABELS", "infoundry,infrastructure,terraform")
+          labels = [l.strip() for l in labels_str.split(",") if l.strip()]
 
           timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
           branch_name = f"infoundry/iac-{timestamp}"
@@ -89,6 +98,7 @@ tasks:
               "branch": branch_name,
               "base_branch": base_branch,
               "files": files,
+              "labels": labels,
               "pr_url": None,
               "pr_number": None,
               "status": "pending"
@@ -137,6 +147,14 @@ tasks:
                           result["pr_number"] = pr.get("number")
                           result["status"] = "created"
                           print(f"PR created: {result['pr_url']}")
+                          
+                          # Add labels to PR
+                          if labels:
+                              label_result = github_api("POST", f"/issues/{pr['number']}/labels", {"labels": labels})
+                              if label_result:
+                                  print(f"Labels added: {labels}")
+                              else:
+                                  print("Warning: Failed to add labels")
                       else:
                           result["status"] = "failed"
                           result["message"] = "Failed to create PR"
