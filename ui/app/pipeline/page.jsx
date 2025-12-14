@@ -9,12 +9,6 @@ import StepOutputCard from '@/components/StepOutputCard';
 import { PIPELINE_STEPS } from '@/lib/kestra';
 import styles from './page.module.css';
 
-import StepOutputCard from '@/components/StepOutputCard';
-import styles from './page.module.css';
-import { PIPELINE_STEPS } from '@/lib/kestra';
-
-const POLL_INTERVAL = 2000; // 2 seconds
-
 const POLL_INTERVAL = 2000; /**
  * Render the pipeline execution page that provides a form to start a pipeline, shows live execution progress, and displays per-step outputs.
  *
