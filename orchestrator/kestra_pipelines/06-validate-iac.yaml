@@ -33,6 +33,7 @@ tasks:
           # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
         script: |
           import json
+          import sys
           import os
           import zipfile
           import subprocess
@@ -114,7 +115,6 @@ tasks:
               sys.exit(1)
           else:
               print("\n✅ VALIDATION PASSED - proceeding to next step")
-
 outputs:
   - id: deploy_result
     type: FILE
