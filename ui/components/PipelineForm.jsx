@@ -9,6 +9,27 @@ const CLOUD_PROVIDERS = [
   { value: 'azure', label: 'Microsoft Azure' },
 ];
 
+/**
+ * Render a form for configuring and running a pipeline.
+ *
+ * The form collects repository, branch, target repository, cloud provider,
+ * project name, target folder, and two toggles (skip PR creation, skip validation).
+ * It validates that `repo_url` contains "github.com" and that `project_name` is not empty.
+ *
+ * @param {Object} props
+ * @param {(formData: {
+ *   repo_url: string,
+ *   branch: string,
+ *   repository: string,
+ *   cloud_provider: string,
+ *   project_name: string,
+ *   target_folder: string,
+ *   skip_pr: boolean,
+ *   skip_validation: boolean
+ * }) => void} props.onSubmit - Callback invoked with the collected form data when the form is valid and submitted.
+ * @param {boolean} props.isRunning - When true, disables inputs and shows a running state for the submit button.
+ * @returns {JSX.Element} The pipeline configuration form.
+ */
 export default function PipelineForm({ onSubmit, isRunning }) {
   const [formData, setFormData] = useState({
     repo_url: '',

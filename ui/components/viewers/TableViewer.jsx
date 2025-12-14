@@ -6,6 +6,14 @@ import styles from './TableViewer.module.css';
 
 const PAGE_SIZE = 10;
 
+/**
+ * Render a sortable, paginated table view for an array of objects.
+ *
+ * @param {Object} props
+ * @param {Array<Record<string, any>>} props.data - Array of row objects whose keys determine table columns; if not an array or empty, renders a "No tabular data" placeholder.
+ * @param {string} [props.title] - Optional title displayed above the table.
+ * @returns {JSX.Element} The table viewer element (or a placeholder paragraph when no data is available).
+ */
 export default function TableViewer({ data, title }) {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
@@ -110,6 +118,12 @@ export default function TableViewer({ data, title }) {
   );
 }
 
+/**
+ * Format a value for display in a table cell.
+ *
+ * @param {*} value - The value to format.
+ * @returns {string} '-' for `null` or `undefined`, `'✓'` for `true`, `'✗'` for `false`, a JSON string for objects, or the value converted to a string otherwise.
+ */
 function formatValue(value) {
   if (value === null || value === undefined) return '-';
   if (typeof value === 'boolean') return value ? '✓' : '✗';

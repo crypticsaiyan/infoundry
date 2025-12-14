@@ -4,6 +4,14 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, ArrowDown, AlertCircle, X } from 'lucide-react';
 import styles from './LogViewer.module.css';
 
+/**
+ * Renders an interactive log viewer with filtering, auto-scroll, and level highlighting.
+ * @param {{logs: string|Array|any, title?: string, maxHeight?: number}} props - Component props.
+ * @param {string|Array|any} props.logs - Log data to display; may be a newline-delimited string, an array of strings or objects, or any other object (will be stringified).
+ * @param {string} [props.title] - Optional header title displayed above the logs.
+ * @param {number} [props.maxHeight=300] - Maximum height in pixels for the scrollable log area.
+ * @returns {JSX.Element} The rendered log viewer component.
+ */
 export default function LogViewer({ logs, title, maxHeight = 300 }) {
   const [filter, setFilter] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);

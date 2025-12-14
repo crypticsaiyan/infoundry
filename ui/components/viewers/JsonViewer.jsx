@@ -14,6 +14,15 @@ const TYPE_COLORS = {
   array: '#ec4899',
 };
 
+/**
+ * Render a JSON value as a syntax-colored, collapsible tree node.
+ *
+ * Renders primitive values (string, number, boolean, null) with type-specific styling and renders objects/arrays as expandable containers that show keys/indices and nested values.
+ *
+ * @param {*} value - The JSON-compatible value to render.
+ * @param {number} [depth=0] - Current nesting depth; influences the node's initial expanded state and is passed to nested children.
+ * @returns {JSX.Element} A JSX element representing the rendered JSON value (primitives, or a collapsible composite with children).
+ */
 function JsonValue({ value, depth = 0 }) {
   const [isExpanded, setIsExpanded] = useState(depth < 2);
   
@@ -75,6 +84,17 @@ function JsonValue({ value, depth = 0 }) {
   );
 }
 
+/**
+ * Render an interactive, collapsible JSON viewer with a copy-to-clipboard control.
+ *
+ * Renders "No data" when `data` is null or undefined. The copy button writes a pretty-printed JSON representation of `data` to the clipboard and shows temporary feedback.
+ *
+ * @param {Object} props
+ * @param {*} props.data - JSON-compatible value to display.
+ * @param {string} [props.title] - Optional header title shown above the viewer.
+ * @param {number} [props.maxHeight=400] - Maximum height in pixels for the viewer area; content exceeding this becomes scrollable.
+ * @returns {JSX.Element} The JSON viewer element.
+ */
 export default function JsonViewer({ data, title, maxHeight = 400 }) {
   const [copied, setCopied] = useState(false);
   

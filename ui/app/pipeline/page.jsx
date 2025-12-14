@@ -15,7 +15,12 @@ import { PIPELINE_STEPS } from '@/lib/kestra';
 
 const POLL_INTERVAL = 2000; // 2 seconds
 
-const POLL_INTERVAL = 2000; // 2 seconds
+const POLL_INTERVAL = 2000; /**
+ * Render the pipeline execution page that provides a form to start a pipeline, shows live execution progress, and displays per-step outputs.
+ *
+ * Renders UI for configuring and triggering a pipeline run, polls execution status while running, maps task run data to per-step progress, and presents errors and completion state.
+ * @returns {JSX.Element} The pipeline execution page element.
+ */
 
 export default function PipelinePage() {
   const [isRunning, setIsRunning] = useState(false);

@@ -14,7 +14,13 @@ import GraphViewer from './viewers/GraphViewer';
 import PRViewer from './viewers/PRViewer';
 import LogViewer from './viewers/LogViewer';
 
-// Helper to format duration
+/**
+ * Compute a concise human-readable duration between two dates.
+ *
+ * @param {Date|string} startDate - The start time (Date object or ISO date string).
+ * @param {Date|string} endDate - The end time (Date object or ISO date string).
+ * @returns {string|null} A duration string: milliseconds (e.g., "123ms") when less than 1 second, seconds with one decimal (e.g., "1.2s") when less than 1 minute, or minutes with one decimal (e.g., "2.5m") otherwise; returns `null` if either date is missing.
+ */
 function formatDuration(startDate, endDate) {
   if (!startDate || !endDate) return null;
   const ms = new Date(endDate) - new Date(startDate);
@@ -72,7 +78,14 @@ const STEP_CONFIG = {
   },
 };
 
-// Score card for evaluation
+/**
+ * Render a circular score badge that displays a normalized score, its maximum, and a label.
+ *
+ * @param {Object} props
+ * @param {number} props.score - Numeric score. If between 0 (exclusive) and 1 (inclusive) it is treated as a decimal fraction and converted to a percentage; otherwise it is treated as an absolute score.
+ * @param {number} [props.maxScore=100] - Maximum score for display when `score` is absolute; ignored when `score` is treated as a decimal (display max becomes 100).
+ * @param {string} [props.status] - Optional label shown below the score (defaults to "Score").
+ * @returns {JSX.Element} A styled score card element showing the score, maximum, and status label with color indicating performance.
 function ScoreCard({ score, maxScore = 100, status }) {
   // Handle decimal scores (0.0-1.0) by converting to percentage
   const isDecimal = score > 0 && score <= 1;
@@ -97,7 +110,19 @@ function ScoreCard({ score, maxScore = 100, status }) {
   );
 }
 
-// IaC manifest display
+/**
+ * Renders an IaC bundle summary including provider, pattern, source, component count, generated files, and optional AI summaries.
+ * @param {Object} props
+ * @param {Object} props.data - IaC bundle metadata and optional artifacts.
+ * @param {string} [props.data.provider] - Infrastructure provider (defaults to "aws" when absent).
+ * @param {string} [props.data.pattern] - Identified infrastructure pattern.
+ * @param {string} [props.data.source] - Source detection method (defaults to "heuristic" when absent).
+ * @param {number} [props.data.component_count] - Number of components in the bundle.
+ * @param {string[]} [props.data.files] - List of generated file paths.
+ * @param {any} [props.data.ai_summary] - Optional AI-generated summary object to display.
+ * @param {any} [props.data.ai_decisions] - Optional AI decisions object to display.
+ * @returns {JSX.Element|null} The IaC display element, or `null` if `data` is falsy.
+ */
 function IaCDisplay({ data }) {
   if (!data) return null;
   
@@ -151,7 +176,17 @@ function IaCDisplay({ data }) {
   );
 }
 
-// Validation results display
+/**
+ * Renders a validation summary including overall status, test counts, an optional test results table, and deploy logs.
+ *
+ * @param {Object} data - Validation payload to display.
+ * @param {Object} [data.smoke_tests] - Smoke test grouping.
+ * @param {Array<Object>} [data.smoke_tests.tests] - Array of test results; each test may include `name`, `passed` (boolean), and `output`.
+ * @param {boolean} [data.success] - Overall validation success flag.
+ * @param {string} [data.deploy_status] - Human-readable deploy status.
+ * @param {string|Array<string>} [data.deploy_output] - Deploy output logs; passed to the log viewer when present.
+ * @returns {JSX.Element|null} The rendered validation display element, or `null` if `data` is not provided.
+ */
 function ValidationDisplay({ data }) {
   if (!data) return null;
   
@@ -190,7 +225,17 @@ function ValidationDisplay({ data }) {
   );
 }
 
-// Smart output renderer
+/**
+ * Render step outputs using the configured viewer and handle loading or error states.
+ *
+ * @param {Object} props - Component props.
+ * @param {string} props.stepId - Identifier of the step used to look up renderer configuration.
+ * @param {*} props.outputs - Direct step outputs (used when no external file content is available).
+ * @param {*} props.fileContent - Fetched file content to prefer over `outputs` when present.
+ * @param {boolean} props.isLoading - When true, shows a loading state instead of output.
+ * @param {string|null} props.error - When present, shows an error message instead of output.
+ * @returns {JSX.Element} The rendered output element for the step, selected by loading/error state and the step's configured renderer.
+ */
 function OutputRenderer({ stepId, outputs, fileContent, isLoading, error }) {
   const config = STEP_CONFIG[stepId];
   
@@ -254,6 +299,16 @@ function OutputRenderer({ stepId, outputs, fileContent, isLoading, error }) {
   }
 }
 
+/**
+ * Render a collapsible card that displays a pipeline step's status, duration, errors, and outputs.
+ *
+ * When expanded and the step is completed, the component will attempt to fetch file content for any kestra:/// URI found in the step outputs and fall back to inline outputs if no URI is found or fetch fails.
+ *
+ * @param {Object} props
+ * @param {Object} props.step - Step data. Expected keys: `id`, `label`, `state`, `startDate`, `endDate`, `outputs`, and optional `error`.
+ * @param {boolean} [props.isExpanded=false] - Initial expanded state of the card.
+ * @returns {JSX.Element} The StepOutputCard element.
+ */
 export default function StepOutputCard({ step, isExpanded: defaultExpanded = false }) {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [fileContent, setFileContent] = useState(null);

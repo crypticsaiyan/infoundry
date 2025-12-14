@@ -33,9 +33,10 @@ export const STATE_MAP = {
 };
 
 /**
- * Trigger the end-to-end pipeline via Next.js API proxy
- * @param {Object} inputs - Pipeline input parameters
- * @returns {Promise<{executionId: string}>}
+ * Starts the Kestra end-to-end pipeline using the application's Next.js API proxy.
+ * @param {Object} inputs - Pipeline input parameters passed to the execution endpoint.
+ * @returns {{executionId: string}} Object containing the started execution's `executionId`.
+ * @throws {Error} If the API responds with a non-OK status; the response's error message is used when available.
  */
 export async function triggerPipeline(inputs) {
   const response = await fetch('/api/kestra/execute', {
@@ -55,9 +56,9 @@ export async function triggerPipeline(inputs) {
 }
 
 /**
- * Get execution status and task runs via Next.js API proxy
- * @param {string} executionId 
- * @returns {Promise<{state: string, taskRuns: Array}>}
+ * Retrieve a Kestra execution's state and its task runs.
+ * @param {string} executionId - Kestra execution identifier.
+ * @returns {Promise<{state: string, taskRuns: Array}>} An object containing `state` and an array of `taskRuns`.
  */
 export async function getExecutionStatus(executionId) {
   const response = await fetch(`/api/kestra/status/${encodeURIComponent(executionId)}`, {
@@ -76,9 +77,9 @@ export async function getExecutionStatus(executionId) {
 }
 
 /**
- * Get file content from Kestra storage via Next.js API proxy
- * @param {string} uri - Kestra internal storage URI (kestra:///...)
- * @returns {Promise<Object>}
+ * Fetches and returns the parsed JSON content of a Kestra storage file.
+ * @param {string} uri - Kestra storage URI (e.g. "kestra:///path/to/object").
+ * @returns {Object|null} The parsed JSON content of the file, or `null` if the request failed or the resource was not retrievable.
  */
 export async function getFileContent(uri) {
   const response = await fetch(`/api/kestra/file?uri=${encodeURIComponent(uri)}`, {
@@ -96,9 +97,14 @@ export async function getFileContent(uri) {
 }
 
 /**
- * Map execution data to step progress format
- * @param {Object} executionData 
- * @returns {Array<{id, label, order, state, startDate, endDate, outputs}>}
+ * Convert Kestra execution data into the pipeline step list enriched with progress metadata.
+ *
+ * @param {Object} executionData - Execution payload containing a `taskRuns` array of task run objects.
+ *   Each task run object is expected to include `id`, `state`, `startDate`, `endDate`, and `outputs`.
+ * @returns {Array<{id: string, label: string, order: number, state: string, startDate?: string, endDate?: string, outputs: Object}>}
+ *   An array of pipeline steps (from PIPELINE_STEPS) where each step is augmented with `state`,
+ *   `startDate`, `endDate`, and `outputs`. If a corresponding task run is missing, `state` is `"pending"`
+ *   and `outputs` is an empty object.
  */
 export function mapToStepProgress(executionData) {
   const taskRunMap = new Map(
@@ -118,10 +124,10 @@ export function mapToStepProgress(executionData) {
 }
 
 /**
- * Calculate duration between two dates
- * @param {string} startDate 
- * @param {string} endDate 
- * @returns {string} Duration in human-readable format
+ * Produce a human-readable duration between two ISO date strings.
+ * @param {string} startDate - ISO 8601 start timestamp.
+ * @param {string} endDate - ISO 8601 end timestamp.
+ * @returns {string|null} Duration expressed in `ms`, `s`, `m`, or `h`, or `null` if either input is missing.
  */
 export function calculateDuration(startDate, endDate) {
   if (!startDate || !endDate) return null;
