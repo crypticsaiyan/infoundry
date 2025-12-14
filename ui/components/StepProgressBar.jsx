@@ -10,6 +10,14 @@ const STEPS = PIPELINE_STEPS.map((step, index) => ({
   shortLabel: step.order?.toString() || (index + 1).toString(),
 }));
 
+/**
+ * Render a horizontal step progress bar that displays each pipeline step's state and optionally allows clicking a step.
+ *
+ * @param {Array<{id: string, label: string, shortLabel?: string, state?: 'pending'|'running'|'completed'|'failed'}>} [steps=[]] - Step objects with their current state; if a step has no state it is treated as "pending".
+ * @param {string|number} [currentStep] - The id of the currently active step.
+ * @param {(stepId: string|number) => void} [onStepClick] - Optional callback invoked with a step's id when that step is clicked.
+ * @returns {import('react').ReactElement} A React element representing the step progress bar.
+ */
 export default function StepProgressBar({ steps = [], currentStep, onStepClick }) {
   // Create a map for quick lookups
   const stepStateMap = new Map(steps.map(s => [s.id, s.state]));

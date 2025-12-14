@@ -4,6 +4,22 @@ import { useState } from 'react';
 import { GitPullRequest, FileText, User, Clock, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react';
 import styles from './PRViewer.module.css';
 
+/**
+ * Render a pull request summary UI including header, metadata, optional description, a collapsible files-changed list, and an optional external link.
+ * @param {Object} props
+ * @param {Object} props.data - Pull request data; when falsy the component renders an empty-state message.
+ * @param {number|string} [props.data.pr_number] - Pull request number.
+ * @param {string} [props.data.pr_url] - URL to the PR on the remote host.
+ * @param {string} [props.data.title] - Pull request title.
+ * @param {string} [props.data.description] - Pull request description/body.
+ * @param {string} [props.data.author] - Author name.
+ * @param {string} [props.data.status] - PR status (e.g., "open", "merged", "closed", "draft").
+ * @param {string} [props.data.branch] - Source branch name.
+ * @param {string} [props.data.base_branch] - Target/base branch name (defaults to "main" when absent).
+ * @param {Array<Object|string>} [props.data.files_changed] - List of changed files; each item may be a string or an object with `filename`, `additions`, and `deletions`.
+ * @param {string|number|Date} [props.data.created_at] - Creation timestamp.
+ * @returns {JSX.Element} A React element rendering the pull request viewer.
+ */
 export default function PRViewer({ data }) {
   const [showFiles, setShowFiles] = useState(false);
   

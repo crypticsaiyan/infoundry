@@ -9,7 +9,12 @@ const KESTRA_API_URL = process.env.KESTRA_API_URL || 'http://localhost:8080';
 const KESTRA_TENANT = process.env.KESTRA_TENANT || 'main';
 const FETCH_TIMEOUT_MS = 10000; // 10 second timeout
 
-// Build auth headers based on available credentials
+/**
+ * Build request headers containing an Authorization entry for Kestra based on available environment credentials.
+ *
+ * Prefers a bearer token from `KESTRA_API_TOKEN`; if absent, uses Basic auth from `KESTRA_USERNAME` and `KESTRA_PASSWORD`. Returns an empty object when no credentials are configured.
+ * @returns {Object} An object of HTTP headers; includes an `Authorization` header when credentials are available. 
+ */
 function getAuthHeaders() {
   const headers = {};
   
@@ -29,8 +34,26 @@ function getAuthHeaders() {
 }
 
 /**
- * GET /api/kestra/status/[executionId]
- * Fetches the execution status from Kestra
+ * Fetches and returns a normalized Kestra execution status for the provided executionId.
+ *
+ * @param {Request} request - The incoming Next.js request object.
+ * @param {{ params: { executionId?: string } }} context - Route context containing path parameters.
+ * @param {Object} context.params.executionId - The execution identifier extracted from the route.
+ * @returns {Object} A JSON payload with the execution summary:
+ *  - executionId: The Kestra execution id.
+ *  - state: Mapped, frontend-friendly execution state (defaults to "pending" if unknown).
+ *  - rawState: The original Kestra execution state string.
+ *  - startDate: Execution start timestamp (if available).
+ *  - endDate: Execution end timestamp (if available).
+ *  - taskRuns: Array of normalized task run objects, each with:
+ *      - id: Task id.
+ *      - state: Mapped task state (defaults to "pending" if unknown).
+ *      - rawState: Original Kestra task state string.
+ *      - startDate: Task start timestamp (if available).
+ *      - endDate: Task end timestamp (if available).
+ *      - outputs: Task outputs with nested `outputs` flattened when present.
+ *      - error: Task error payload when the raw state is "FAILED", otherwise `null`.
+ *  - outputs: Execution-level outputs object (empty object when absent).
  */
 export async function GET(request, { params }) {
   try {

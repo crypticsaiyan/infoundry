@@ -4,7 +4,15 @@ import { NextResponse } from 'next/server';
 const KESTRA_API_URL = process.env.KESTRA_API_URL || 'http://localhost:8080';
 const KESTRA_TENANT = process.env.KESTRA_TENANT || 'main';
 
-// Build auth headers based on available credentials
+/**
+ * Build HTTP authentication headers for Kestra using available environment credentials.
+ *
+ * Prefers an API token when KESTRA_API_TOKEN is set; otherwise uses Basic auth when
+ * KESTRA_USERNAME and KESTRA_PASSWORD are provided. If no credentials are available,
+ * returns an empty object.
+ *
+ * @returns {Object} An object containing an `Authorization` header (`Bearer <token>` or `Basic <credentials>`) or an empty object if no credentials are configured.
+ */
 function getAuthHeaders() {
   const headers = {};
   
@@ -21,8 +29,10 @@ function getAuthHeaders() {
 }
 
 /**
- * Extract execution ID from a Kestra internal URI
- * URI format: kestra:///namespace/flowId/executions/EXEC_ID/tasks/...
+ * Extract the execution ID from a Kestra internal URI.
+ *
+ * @param {string} uri - Kestra internal URI (e.g., "kestra:///namespace/flowId/executions/EXEC_ID/tasks/...").
+ * @returns {string|null} The execution ID string if found, `null` otherwise.
  */
 function extractExecutionId(uri) {
   const match = uri.match(/executions\/([^\/]+)/);
@@ -30,8 +40,18 @@ function extractExecutionId(uri) {
 }
 
 /**
- * GET /api/kestra/file?uri=...
- * Fetches file content from Kestra internal storage
+ * Handle GET /api/kestra/file?uri=... and return the content of a Kestra-stored file.
+ *
+ * Processes the `uri` query parameter to extract an execution ID, proxies a request to the Kestra
+ * file API, and returns one of:
+ * - the parsed JSON file content (when the file is valid JSON),
+ * - { type: 'text', content } for plain-text content,
+ * - { type: 'binary', contentType, size, message } for large/binary responses,
+ * or an error JSON when the `uri` is missing/invalid, Kestra responds with an error, or an internal
+ * error occurs.
+ *
+ * @param {Request} request - Incoming request containing the `uri` query parameter.
+ * @returns {import('next/server').NextResponse} JSON response with the file content or an error object.
  */
 export async function GET(request) {
   try {

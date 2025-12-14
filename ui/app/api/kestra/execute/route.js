@@ -5,7 +5,15 @@ const KESTRA_API_URL = process.env.KESTRA_API_URL || 'http://localhost:8080';
 const KESTRA_TENANT = process.env.KESTRA_TENANT || 'main';
 const KESTRA_NAMESPACE = 'infoundry';
 
-// Build auth headers based on available credentials
+/**
+ * Build HTTP authorization headers using available Kestra credentials.
+ *
+ * Prefers the API token (KESTRA_API_TOKEN) and falls back to Basic Auth using
+ * KESTRA_USERNAME and KESTRA_PASSWORD if the token is not present.
+ *
+ * @returns {{[header: string]: string}} An object containing an `Authorization`
+ * header when credentials are available, or an empty object otherwise.
+ */
 function getAuthHeaders() {
   const headers = {};
   
@@ -25,8 +33,12 @@ function getAuthHeaders() {
 }
 
 /**
- * POST /api/kestra/execute
- * Triggers the end-to-end Kestra pipeline
+ * Trigger a Kestra end-to-end pipeline using inputs from the incoming request.
+ *
+ * Expects a JSON body containing pipeline inputs; `repo_url` is required.
+ *
+ * @param {Request} request - Incoming HTTP request whose JSON body provides pipeline inputs (e.g., `repo_url`, `branch`, `repository`, `cloud_provider`, `project_name`, `target_folder`, `skip_pr`, `skip_validation`).
+ * @returns {import('next/server').NextResponse} JSON response containing `executionId`, `state`, and a success message on success; on error returns a JSON object with `error` and `details` (or `message`) and an appropriate HTTP status.
  */
 export async function POST(request) {
   try {

@@ -47,7 +47,12 @@ const ICON_TO_TYPE = {
   'activity': 'monitoring',
 };
 
-// Enhanced custom node with gradient background and glow - HORIZONTAL layout
+/**
+ * Render a custom infrastructure node for ReactFlow that shows an icon, label, and type badge with color-based styling.
+ * @param {{ label?: string, icon?: string, style?: { background?: string } }} props.data - Node payload; `label` is the node text, `icon` selects the visual icon key, and `style.background` overrides the node color.
+ * @param {boolean} props.selected - Whether the node is in a selected state (affects visual styling).
+ * @returns {JSX.Element} A JSX element representing the styled node with connection handles. 
+ */
 function InfraNode({ data, selected }) {
   const nodeType = ICON_TO_TYPE[data.icon] || 'default';
   const typeConfig = NODE_TYPES[nodeType] || NODE_TYPES.default;
@@ -79,6 +84,15 @@ const nodeTypes = {
   default: InfraNode,
 };
 
+/**
+ * Render an interactive architecture graph with custom node types, edges, a legend, and node selection UI.
+ *
+ * @param {Object} props
+ * @param {Object} props.data - Graph data containing `nodes` and `edges`. Each node may include `id`, `position`, `data` (with `label` and `icon`), `style`; `data.metadata.pattern` is used to show an optional pattern badge.
+ * @param {string} [props.title] - Optional header title shown above the graph; defaults to "Architecture Graph" when not provided.
+ * @param {number} [props.height=350] - Height in pixels of the graph area.
+ * @returns {JSX.Element} The rendered GraphViewer component.
+ */
 export default function GraphViewer({ data, title, height = 350 }) {
   const [selectedNode, setSelectedNode] = useState(null);
   
