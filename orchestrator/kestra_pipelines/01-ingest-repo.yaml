@@ -4,432 +4,471 @@ namespace: infoundry
 description: Analyzes a git repo to detect services and components
 
 inputs:
-  - id: repo_url
-    type: STRING
-    required: true
-    description: Git repository URL to analyze
+    - id: repo_url
+      type: STRING
+      required: true
+      description: Git repository URL to analyze
 
-  - id: branch
-    type: STRING
-    required: false
-    description: Git branch to clone
+    - id: branch
+      type: STRING
+      required: false
+      description: Git branch to clone
 
 tasks:
-  # Extract owner/repo from the GitHub URL
-  - id: parse_repo_url
-    type: io.kestra.plugin.scripts.python.Script
-    outputFiles:
-      - repo_info.json
-    script: |
-      import json
-      import re
-
-      url = "{{ inputs.repo_url }}"
-      # Extract owner/repo from various GitHub URL formats
-      patterns = [
-          r'github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$',  # HTTPS or SSH
-          r'github\.com/([^/]+)/([^/]+?)/?$'  # Web URL
-      ]
-
-      owner, repo = None, None
-      for pattern in patterns:
-          match = re.search(pattern, url)
-          if match:
-              owner, repo = match.groups()
-              break
-
-      info = {"owner": owner, "repo": repo, "full_name": f"{owner}/{repo}" if owner else None}
-      with open("repo_info.json", "w") as f:
-          json.dump(info, f)
-      print(json.dumps(info, indent=2))
-
-  # Fetch programming languages from GitHub API
-  - id: fetch_languages
-    type: io.kestra.plugin.core.http.Request
-    uri: "https://api.github.com/repos/{{ read(outputs.parse_repo_url.outputFiles['repo_info.json']) | jq('.owner') | first }}/{{ read(outputs.parse_repo_url.outputFiles['repo_info.json']) | jq('.repo') | first }}/languages"
-    method: GET
-    headers:
-      Accept: "application/vnd.github+json"
-      User-Agent: "infoundry-kestra"
-
-  - id: working_dir
-    type: io.kestra.plugin.core.flow.WorkingDirectory
-    outputFiles:
-      - service_profile.json
-    tasks:
-      - id: clone_repository
-        type: io.kestra.plugin.git.Clone
-        url: "{{ inputs.repo_url }}"
-        branch: "{{ inputs.branch ?? 'main' }}"
-        depth: 1
-
-      - id: analyze_repo
-        type: io.kestra.plugin.scripts.python.Script
-        env:
-          GITHUB_LANGUAGES: "{{ outputs.fetch_languages.body }}"
-        script: |
+    # Extract owner/repo from the GitHub URL
+    - id: parse_repo_url
+      type: io.kestra.plugin.scripts.python.Script
+      outputFiles:
+          - repo_info.json
+      script: |
           import json
-          import os
           import re
-          import subprocess
-          from pathlib import Path
-          from collections import defaultdict
 
-          # =============================================================================
-          # OPTIMIZED SERVICE DETECTION ALGORITHM
-          # Complexity: O(1) Disk I/O (git index) + O(N) Memory (string filtering)
-          # =============================================================================
+          url = "{{ inputs.repo_url }}"
+          # Extract owner/repo from various GitHub URL formats
+          patterns = [
+              r'github\.com[:/]([^/]+)/([^/.]+?)(?:\.git)?$',  # HTTPS or SSH
+              r'github\.com/([^/]+)/([^/]+?)/?$'  # Web URL
+          ]
 
-          # Parse GitHub Languages API response
-          GITHUB_LANGUAGES_RAW = os.environ.get("GITHUB_LANGUAGES", "{}")
-          try:
-              GITHUB_LANGUAGES = json.loads(GITHUB_LANGUAGES_RAW)
-          except json.JSONDecodeError:
-              GITHUB_LANGUAGES = {}
+          owner, repo = None, None
+          for pattern in patterns:
+              match = re.search(pattern, url)
+              if match:
+                  owner, repo = match.groups()
+                  break
 
-          if GITHUB_LANGUAGES:
-              PRIMARY_LANGUAGE = max(GITHUB_LANGUAGES.keys(), key=lambda k: GITHUB_LANGUAGES[k]).lower()
-              ALL_LANGUAGES = [lang.lower() for lang in GITHUB_LANGUAGES.keys()]
-          else:
-              PRIMARY_LANGUAGE = ""
-              ALL_LANGUAGES = []
+          info = {"owner": owner, "repo": repo, "full_name": f"{owner}/{repo}" if owner else None}
+          with open("repo_info.json", "w") as f:
+              json.dump(info, f)
+          print(json.dumps(info, indent=2))
 
-          # Normalize GitHub language names
-          LANG_MAP = {"c++": "cpp", "c#": "csharp", "objective-c": "objectivec"}
-          PRIMARY_LANGUAGE = LANG_MAP.get(PRIMARY_LANGUAGE, PRIMARY_LANGUAGE)
-          ALL_LANGUAGES = [LANG_MAP.get(l, l) for l in ALL_LANGUAGES]
+    # Fetch programming languages from GitHub API
+    - id: fetch_languages
+      type: io.kestra.plugin.core.http.Request
+      uri: "https://api.github.com/repos/{{ read(outputs.parse_repo_url.outputFiles['repo_info.json']) | jq('.owner') | first }}/{{ read(outputs.parse_repo_url.outputFiles['repo_info.json']) | jq('.repo') | first }}/languages"
+      method: GET
+      headers:
+          Accept: "application/vnd.github+json"
+          User-Agent: "infoundry-kestra"
 
-          # Service root markers - files that indicate the root of a service
-          ROOT_MARKERS = ["package.json", "go.mod", "pom.xml", "requirements.txt", "pyproject.toml", "Cargo.toml", "Dockerfile", "build.gradle", "CMakeLists.txt", "Gemfile"]
+    - id: working_dir
+      type: io.kestra.plugin.core.flow.WorkingDirectory
+      outputFiles:
+          - service_profile.json
+      tasks:
+          - id: clone_repository
+            type: io.kestra.plugin.git.Clone
+            url: "{{ inputs.repo_url }}"
+            branch: "{{ inputs.branch ?? 'main' }}"
+            depth: 1
 
-          # Common service directory patterns
-          SERVICE_DIRS = [".", "src", "backend", "frontend", "server", "client", "api", "app", "apps", "services", "packages", "libs", "web"]
+          - id: analyze_repo
+            type: io.kestra.plugin.scripts.python.Script
+            env:
+                GITHUB_LANGUAGES: "{{ outputs.fetch_languages.body }}"
+            script: |
+                import json
+                import os
+                import re
+                import subprocess
+                import sys
+                from pathlib import Path
+                from collections import defaultdict
 
-          # =============================================================================
-          # STEP 1: FAST MARKER SCAN (O(dirs * markers) instead of O(all files))
-          # =============================================================================
-          def find_markers_fast():
-              """Directly scan for marker files in common locations - much faster than os.walk."""
-              services = {}
-              
-              # Check root level first
-              root_markers = [m for m in ROOT_MARKERS if Path(m).exists()]
-              if root_markers:
-                  services["main"] = {
-                      "markers": root_markers,
-                      "path": "."
-                  }
-              
-              # Check common service directories (depth 1)
-              for d in SERVICE_DIRS:
-                  if d == ".":
-                      continue
-                  dir_path = Path(d)
-                  if dir_path.exists() and dir_path.is_dir():
-                      markers = [f"{d}/{m}" for m in ROOT_MARKERS if (dir_path / m).exists()]
-                      if markers:
-                          services[d] = {
-                              "markers": markers,
-                              "path": d
-                          }
-              
-              # Check one level deeper for monorepo patterns (packages/*, apps/*, services/*)
-              monorepo_roots = ["packages", "apps", "services", "libs"]
-              for mono_root in monorepo_roots:
-                  mono_path = Path(mono_root)
-                  if mono_path.exists() and mono_path.is_dir():
-                      try:
-                          for subdir in mono_path.iterdir():
-                              if subdir.is_dir() and not subdir.name.startswith("."):
-                                  markers = [f"{mono_root}/{subdir.name}/{m}" for m in ROOT_MARKERS if (subdir / m).exists()]
-                                  if markers:
-                                      services[f"{mono_root}/{subdir.name}"] = {
-                                          "markers": markers,
-                                          "path": f"{mono_root}/{subdir.name}"
-                                      }
-                      except PermissionError:
-                          pass
-              
-              return services
+                # =============================================================================
+                # CHECK FOR USER-PROVIDED SERVICE PROFILE
+                # If the user has placed a service_profile.json in .infoundry/, use it directly
+                # =============================================================================
 
-          # =============================================================================
-          # STEP 3: PARSE STRUCTURED FILES (targeted reads only)
-          # =============================================================================
-          def parse_package_json(filepath):
-              """Parse package.json and extract dependencies."""
-              try:
-                  with open(filepath) as f:
-                      pkg = json.load(f)
-                  deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
-                  scripts = pkg.get("scripts", {})
-                  return {"deps": deps, "scripts": scripts, "name": pkg.get("name", "")}
-              except:
-                  return {"deps": {}, "scripts": {}, "name": ""}
+                USER_PROFILE_PATH = Path(".infoundry/service_profile.json")
+                if USER_PROFILE_PATH.exists():
+                    try:
+                        with open(USER_PROFILE_PATH) as f:
+                            profile = json.load(f)
+                        
+                        # Add repo URL and source marker
+                        profile["repo_url"] = "{{ inputs.repo_url }}"
+                        profile["source"] = "user-provided"
+                        
+                        # Ensure required fields exist
+                        if "services" not in profile:
+                            raise ValueError("Missing required 'services' field")
+                        if "service_count" not in profile:
+                            profile["service_count"] = len(profile.get("services", {}))
+                        if "languages" not in profile:
+                            profile["languages"] = []
+                        if "primary_language" not in profile:
+                            profile["primary_language"] = "unknown"
+                        
+                        # Write output and exit
+                        with open("service_profile.json", "w") as f:
+                            json.dump(profile, f, indent=2)
+                        
+                        print("=== USING USER-PROVIDED SERVICE PROFILE ===")
+                        print(f"Source: {USER_PROFILE_PATH}")
+                        print(json.dumps(profile, indent=2))
+                        sys.exit(0)
+                        
+                    except Exception as e:
+                        print(f"Warning: Found .infoundry/service_profile.json but failed to parse: {e}")
+                        print("Falling back to auto-detection...")
 
-          def parse_requirements_txt(filepath):
-              """Parse requirements.txt and extract package names."""
-              try:
-                  with open(filepath) as f:
-                      lines = f.readlines()
-                  deps = []
-                  for line in lines:
-                      line = line.strip().lower()
-                      if line and not line.startswith("#"):
-                          # Extract package name (before ==, >=, etc.)
-                          pkg = re.split(r"[=<>~!]", line)[0].strip()
-                          if pkg:
-                              deps.append(pkg)
-                  return deps
-              except:
-                  return []
+                # =============================================================================
+                # OPTIMIZED SERVICE DETECTION ALGORITHM
+                # Complexity: O(1) Disk I/O (git index) + O(N) Memory (string filtering)
+                # =============================================================================
 
-          def parse_go_mod(filepath):
-              """Parse go.mod and extract module dependencies."""
-              try:
-                  with open(filepath) as f:
-                      content = f.read()
-                  deps = re.findall(r'^\s*(\S+)\s+v', content, re.MULTILINE)
-                  return deps
-              except:
-                  return []
+                # Parse GitHub Languages API response
+                GITHUB_LANGUAGES_RAW = os.environ.get("GITHUB_LANGUAGES", "{}")
+                try:
+                    GITHUB_LANGUAGES = json.loads(GITHUB_LANGUAGES_RAW)
+                except json.JSONDecodeError:
+                    GITHUB_LANGUAGES = {}
 
-          def detect_language_from_markers(markers, service_path):
-              """Detect language based on marker files present."""
-              marker_names = [Path(m).name for m in markers]
-              path = Path(service_path)
-              
-              # Check for TypeScript indicators
-              if "package.json" in marker_names:
-                  tsconfig_exists = (path / "tsconfig.json").exists()
-                  if tsconfig_exists:
-                      return "typescript"
-                  pkg_data = parse_package_json(path / "package.json")
-                  deps = pkg_data["deps"]
-                  if "typescript" in deps or any(k.startswith("@types/") for k in deps):
-                      return "typescript"
-                  return "javascript"
-              
-              if "requirements.txt" in marker_names or "pyproject.toml" in marker_names:
-                  return "python"
-              if "go.mod" in marker_names:
-                  return "go"
-              if "Cargo.toml" in marker_names:
-                  return "rust"
-              if "pom.xml" in marker_names or "build.gradle" in marker_names:
-                  return "java"
-              if "CMakeLists.txt" in marker_names:
-                  return "cpp"
-              if "Gemfile" in marker_names:
-                  return "ruby"
-              
-              return PRIMARY_LANGUAGE or "unknown"
+                if GITHUB_LANGUAGES:
+                    PRIMARY_LANGUAGE = max(GITHUB_LANGUAGES.keys(), key=lambda k: GITHUB_LANGUAGES[k]).lower()
+                    ALL_LANGUAGES = [lang.lower() for lang in GITHUB_LANGUAGES.keys()]
+                else:
+                    PRIMARY_LANGUAGE = ""
+                    ALL_LANGUAGES = []
 
-          def detect_framework(markers, service_path, lang):
-              """Detect framework by parsing dependency files."""
-              path = Path(service_path)
-              
-              if lang in ("javascript", "typescript"):
-                  if (path / "package.json").exists():
-                      pkg_data = parse_package_json(path / "package.json")
-                      deps = pkg_data["deps"]
-                      if "next" in deps:
-                          return "nextjs"
-                      if "express" in deps:
-                          return "express"
-                      if "fastify" in deps:
-                          return "fastify"
-                      if "@nestjs/core" in deps:
-                          return "nestjs"
-                      if "react" in deps:
-                          return "react"
-                      if "vue" in deps:
-                          return "vue"
-                      if "@angular/core" in deps:
-                          return "angular"
-                      if "svelte" in deps:
-                          return "svelte"
-              
-              elif lang == "python":
-                  deps = []
-                  if (path / "requirements.txt").exists():
-                      deps = parse_requirements_txt(path / "requirements.txt")
-                  if "fastapi" in deps:
-                      return "fastapi"
-                  if "django" in deps:
-                      return "django"
-                  if "flask" in deps:
-                      return "flask"
-              
-              elif lang == "go":
-                  if (path / "go.mod").exists():
-                      deps = parse_go_mod(path / "go.mod")
-                      dep_str = " ".join(deps).lower()
-                      if "gin-gonic" in dep_str:
-                          return "gin"
-                      if "gorilla/mux" in dep_str:
-                          return "gorilla"
-                      if "fiber" in dep_str:
-                          return "fiber"
-                      if "echo" in dep_str:
-                          return "echo"
-              
-              return None
+                # Normalize GitHub language names
+                LANG_MAP = {"c++": "cpp", "c#": "csharp", "objective-c": "objectivec"}
+                PRIMARY_LANGUAGE = LANG_MAP.get(PRIMARY_LANGUAGE, PRIMARY_LANGUAGE)
+                ALL_LANGUAGES = [LANG_MAP.get(l, l) for l in ALL_LANGUAGES]
 
-          def detect_databases(markers, service_path, lang):
-              """Detect databases by parsing dependency keys (not text grep)."""
-              path = Path(service_path)
-              databases = []
-              
-              db_packages = {
-                  "postgres": ["pg", "postgres", "psycopg2", "psycopg", "asyncpg", "pgx"],
-                  "mysql": ["mysql", "mysql2", "pymysql", "mysqlclient"],
-                  "mongodb": ["mongodb", "mongoose", "pymongo", "motor"],
-                  "redis": ["redis", "ioredis", "aioredis"],
-                  "sqlite": ["sqlite3", "better-sqlite3", "aiosqlite"],
-                  "elasticsearch": ["elasticsearch", "@elastic/elasticsearch"]
-              }
-              
-              deps = set()
-              if (path / "package.json").exists():
-                  pkg_data = parse_package_json(path / "package.json")
-                  deps.update(k.lower() for k in pkg_data["deps"].keys())
-              if (path / "requirements.txt").exists():
-                  deps.update(parse_requirements_txt(path / "requirements.txt"))
-              
-              for db, packages in db_packages.items():
-                  if any(pkg in deps for pkg in packages):
-                      databases.append(db)
-              
-              return databases
+                # Service root markers - files that indicate the root of a service
+                ROOT_MARKERS = ["package.json", "go.mod", "pom.xml", "requirements.txt", "pyproject.toml", "Cargo.toml", "Dockerfile", "build.gradle", "CMakeLists.txt", "Gemfile"]
 
-          def detect_queues(markers, service_path, lang):
-              """Detect message queues by parsing dependency keys."""
-              path = Path(service_path)
-              queues = []
-              
-              queue_packages = {
-                  "rabbitmq": ["amqplib", "amqp", "pika", "aio-pika"],
-                  "kafka": ["kafkajs", "kafka-python", "confluent-kafka"],
-                  "redis": ["bull", "bullmq", "celery", "rq"],
-                  "sqs": ["@aws-sdk/client-sqs", "boto3"]
-              }
-              
-              deps = set()
-              if (path / "package.json").exists():
-                  pkg_data = parse_package_json(path / "package.json")
-                  deps.update(k.lower() for k in pkg_data["deps"].keys())
-              if (path / "requirements.txt").exists():
-                  deps.update(parse_requirements_txt(path / "requirements.txt"))
-              
-              for queue, packages in queue_packages.items():
-                  if any(pkg in deps for pkg in packages):
-                      queues.append(queue)
-              
-              return queues
+                # Common service directory patterns
+                SERVICE_DIRS = [".", "src", "backend", "frontend", "server", "client", "api", "app", "apps", "services", "packages", "libs", "web"]
 
-          def detect_ports(markers, service_path):
-              """Detect exposed ports from Dockerfile and package.json scripts."""
-              path = Path(service_path)
-              ports = []
-              
-              # Parse Dockerfile EXPOSE
-              dockerfile = path / "Dockerfile"
-              if dockerfile.exists():
-                  try:
-                      content = dockerfile.read_text()
-                      expose_matches = re.findall(r'EXPOSE\s+(\d+)', content)
-                      ports.extend([int(p) for p in expose_matches])
-                  except:
-                      pass
-              
-              # Parse package.json scripts for port flags
-              if (path / "package.json").exists():
-                  pkg_data = parse_package_json(path / "package.json")
-                  for script in pkg_data["scripts"].values():
-                      port_match = re.search(r'-p\s*(\d+)|--port[=\s]+(\d+)|PORT[=\s]+(\d+)', str(script))
-                      if port_match:
-                          port = next(p for p in port_match.groups() if p)
-                          if int(port) not in ports:
-                              ports.append(int(port))
-              
-              return ports
+                # =============================================================================
+                # STEP 1: FAST MARKER SCAN (O(dirs * markers) instead of O(all files))
+                # =============================================================================
+                def find_markers_fast():
+                    """Directly scan for marker files in common locations - much faster than os.walk."""
+                    services = {}
+                    
+                    # Check root level first
+                    root_markers = [m for m in ROOT_MARKERS if Path(m).exists()]
+                    if root_markers:
+                        services["main"] = {
+                            "markers": root_markers,
+                            "path": "."
+                        }
+                    
+                    # Check common service directories (depth 1)
+                    for d in SERVICE_DIRS:
+                        if d == ".":
+                            continue
+                        dir_path = Path(d)
+                        if dir_path.exists() and dir_path.is_dir():
+                            markers = [f"{d}/{m}" for m in ROOT_MARKERS if (dir_path / m).exists()]
+                            if markers:
+                                services[d] = {
+                                    "markers": markers,
+                                    "path": d
+                                }
+                    
+                    # Check one level deeper for monorepo patterns (packages/*, apps/*, services/*)
+                    monorepo_roots = ["packages", "apps", "services", "libs"]
+                    for mono_root in monorepo_roots:
+                        mono_path = Path(mono_root)
+                        if mono_path.exists() and mono_path.is_dir():
+                            try:
+                                for subdir in mono_path.iterdir():
+                                    if subdir.is_dir() and not subdir.name.startswith("."):
+                                        markers = [f"{mono_root}/{subdir.name}/{m}" for m in ROOT_MARKERS if (subdir / m).exists()]
+                                        if markers:
+                                            services[f"{mono_root}/{subdir.name}"] = {
+                                                "markers": markers,
+                                                "path": f"{mono_root}/{subdir.name}"
+                                            }
+                            except PermissionError:
+                                pass
+                    
+                    return services
 
-          def analyze_service(service_name, service_data):
-              """Analyze a single service using its markers."""
-              markers = service_data["markers"]
-              service_path = service_data["path"]
-              
-              lang = detect_language_from_markers(markers, service_path)
-              
-              return {
-                  "path": service_path,
-                  "has_dockerfile": "Dockerfile" in [Path(m).name for m in markers],
-                  "language": lang,
-                  "framework": detect_framework(markers, service_path, lang),
-                  "ports": detect_ports(markers, service_path),
-                  "databases": detect_databases(markers, service_path, lang),
-                  "queues": detect_queues(markers, service_path, lang)
-              }
+                # =============================================================================
+                # STEP 3: PARSE STRUCTURED FILES (targeted reads only)
+                # =============================================================================
+                def parse_package_json(filepath):
+                    """Parse package.json and extract dependencies."""
+                    try:
+                        with open(filepath) as f:
+                            pkg = json.load(f)
+                        deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+                        scripts = pkg.get("scripts", {})
+                        return {"deps": deps, "scripts": scripts, "name": pkg.get("name", "")}
+                    except:
+                        return {"deps": {}, "scripts": {}, "name": ""}
 
-          # =============================================================================
-          # MAIN EXECUTION
-          # =============================================================================
-          try:
-              print("=== FAST SERVICE DETECTION ===")
-              print("Step 1: Scanning for service markers...")
-              service_markers = find_markers_fast()
-              print(f"  Found {len(service_markers)} services")
+                def parse_requirements_txt(filepath):
+                    """Parse requirements.txt and extract package names."""
+                    try:
+                        with open(filepath) as f:
+                            lines = f.readlines()
+                        deps = []
+                        for line in lines:
+                            line = line.strip().lower()
+                            if line and not line.startswith("#"):
+                                # Extract package name (before ==, >=, etc.)
+                                pkg = re.split(r"[=<>~!]", line)[0].strip()
+                                if pkg:
+                                    deps.append(pkg)
+                        return deps
+                    except:
+                        return []
 
-              print("Step 2: Analyzing service configurations...")
-              services = {}
-              for service_name, service_data in service_markers.items():
-                  print(f"  Analyzing: {service_name}")
-                  try:
-                      services[service_name] = analyze_service(service_name, service_data)
-                  except Exception as e:
-                      print(f"  Error analyzing {service_name}: {e}")
-                      services[service_name] = {
-                          "path": service_data.get("path", "."),
-                          "has_dockerfile": False,
-                          "language": PRIMARY_LANGUAGE or "unknown",
-                          "framework": None,
-                          "ports": [],
-                          "databases": [],
-                          "queues": [],
-                          "error": str(e)
-                      }
+                def parse_go_mod(filepath):
+                    """Parse go.mod and extract module dependencies."""
+                    try:
+                        with open(filepath) as f:
+                            content = f.read()
+                        deps = re.findall(r'^\s*(\S+)\s+v', content, re.MULTILINE)
+                        return deps
+                    except:
+                        return []
 
-              profile = {
-                  "services": services,
-                  "repo_url": "{{ inputs.repo_url }}",
-                  "service_count": len(services),
-                  "languages": ALL_LANGUAGES,
-                  "primary_language": PRIMARY_LANGUAGE
-              }
+                def detect_language_from_markers(markers, service_path):
+                    """Detect language based on marker files present."""
+                    marker_names = [Path(m).name for m in markers]
+                    path = Path(service_path)
+                    
+                    # Check for TypeScript indicators
+                    if "package.json" in marker_names:
+                        tsconfig_exists = (path / "tsconfig.json").exists()
+                        if tsconfig_exists:
+                            return "typescript"
+                        pkg_data = parse_package_json(path / "package.json")
+                        deps = pkg_data["deps"]
+                        if "typescript" in deps or any(k.startswith("@types/") for k in deps):
+                            return "typescript"
+                        return "javascript"
+                    
+                    if "requirements.txt" in marker_names or "pyproject.toml" in marker_names:
+                        return "python"
+                    if "go.mod" in marker_names:
+                        return "go"
+                    if "Cargo.toml" in marker_names:
+                        return "rust"
+                    if "pom.xml" in marker_names or "build.gradle" in marker_names:
+                        return "java"
+                    if "CMakeLists.txt" in marker_names:
+                        return "cpp"
+                    if "Gemfile" in marker_names:
+                        return "ruby"
+                    
+                    return PRIMARY_LANGUAGE or "unknown"
 
-              with open("service_profile.json", "w") as f:
-                  json.dump(profile, f, indent=2)
-              print("\n=== OUTPUT ===")
-              print(json.dumps(profile, indent=2))
+                def detect_framework(markers, service_path, lang):
+                    """Detect framework by parsing dependency files."""
+                    path = Path(service_path)
+                    
+                    if lang in ("javascript", "typescript"):
+                        if (path / "package.json").exists():
+                            pkg_data = parse_package_json(path / "package.json")
+                            deps = pkg_data["deps"]
+                            if "next" in deps:
+                                return "nextjs"
+                            if "express" in deps:
+                                return "express"
+                            if "fastify" in deps:
+                                return "fastify"
+                            if "@nestjs/core" in deps:
+                                return "nestjs"
+                            if "react" in deps:
+                                return "react"
+                            if "vue" in deps:
+                                return "vue"
+                            if "@angular/core" in deps:
+                                return "angular"
+                            if "svelte" in deps:
+                                return "svelte"
+                    
+                    elif lang == "python":
+                        deps = []
+                        if (path / "requirements.txt").exists():
+                            deps = parse_requirements_txt(path / "requirements.txt")
+                        if "fastapi" in deps:
+                            return "fastapi"
+                        if "django" in deps:
+                            return "django"
+                        if "flask" in deps:
+                            return "flask"
+                    
+                    elif lang == "go":
+                        if (path / "go.mod").exists():
+                            deps = parse_go_mod(path / "go.mod")
+                            dep_str = " ".join(deps).lower()
+                            if "gin-gonic" in dep_str:
+                                return "gin"
+                            if "gorilla/mux" in dep_str:
+                                return "gorilla"
+                            if "fiber" in dep_str:
+                                return "fiber"
+                            if "echo" in dep_str:
+                                return "echo"
+                    
+                    return None
 
-          except Exception as e:
-              print(f"FATAL ERROR: {e}")
-              import traceback
-              traceback.print_exc()
-              # Still write an output file so the pipeline doesn't completely fail
-              profile = {
-                  "services": {},
-                  "repo_url": "{{ inputs.repo_url }}",
-                  "service_count": 0,
-                  "languages": ALL_LANGUAGES,
-                  "primary_language": PRIMARY_LANGUAGE,
-                  "error": str(e)
-              }
-              with open("service_profile.json", "w") as f:
-                  json.dump(profile, f, indent=2)
-              print(json.dumps(profile, indent=2))
+                def detect_databases(markers, service_path, lang):
+                    """Detect databases by parsing dependency keys (not text grep)."""
+                    path = Path(service_path)
+                    databases = []
+                    
+                    db_packages = {
+                        "postgres": ["pg", "postgres", "psycopg2", "psycopg", "asyncpg", "pgx"],
+                        "mysql": ["mysql", "mysql2", "pymysql", "mysqlclient"],
+                        "mongodb": ["mongodb", "mongoose", "pymongo", "motor"],
+                        "redis": ["redis", "ioredis", "aioredis"],
+                        "sqlite": ["sqlite3", "better-sqlite3", "aiosqlite"],
+                        "elasticsearch": ["elasticsearch", "@elastic/elasticsearch"]
+                    }
+                    
+                    deps = set()
+                    if (path / "package.json").exists():
+                        pkg_data = parse_package_json(path / "package.json")
+                        deps.update(k.lower() for k in pkg_data["deps"].keys())
+                    if (path / "requirements.txt").exists():
+                        deps.update(parse_requirements_txt(path / "requirements.txt"))
+                    
+                    for db, packages in db_packages.items():
+                        if any(pkg in deps for pkg in packages):
+                            databases.append(db)
+                    
+                    return databases
+
+                def detect_queues(markers, service_path, lang):
+                    """Detect message queues by parsing dependency keys."""
+                    path = Path(service_path)
+                    queues = []
+                    
+                    queue_packages = {
+                        "rabbitmq": ["amqplib", "amqp", "pika", "aio-pika"],
+                        "kafka": ["kafkajs", "kafka-python", "confluent-kafka"],
+                        "redis": ["bull", "bullmq", "celery", "rq"],
+                        "sqs": ["@aws-sdk/client-sqs", "boto3"]
+                    }
+                    
+                    deps = set()
+                    if (path / "package.json").exists():
+                        pkg_data = parse_package_json(path / "package.json")
+                        deps.update(k.lower() for k in pkg_data["deps"].keys())
+                    if (path / "requirements.txt").exists():
+                        deps.update(parse_requirements_txt(path / "requirements.txt"))
+                    
+                    for queue, packages in queue_packages.items():
+                        if any(pkg in deps for pkg in packages):
+                            queues.append(queue)
+                    
+                    return queues
+
+                def detect_ports(markers, service_path):
+                    """Detect exposed ports from Dockerfile and package.json scripts."""
+                    path = Path(service_path)
+                    ports = []
+                    
+                    # Parse Dockerfile EXPOSE
+                    dockerfile = path / "Dockerfile"
+                    if dockerfile.exists():
+                        try:
+                            content = dockerfile.read_text()
+                            expose_matches = re.findall(r'EXPOSE\s+(\d+)', content)
+                            ports.extend([int(p) for p in expose_matches])
+                        except:
+                            pass
+                    
+                    # Parse package.json scripts for port flags
+                    if (path / "package.json").exists():
+                        pkg_data = parse_package_json(path / "package.json")
+                        for script in pkg_data["scripts"].values():
+                            port_match = re.search(r'-p\s*(\d+)|--port[=\s]+(\d+)|PORT[=\s]+(\d+)', str(script))
+                            if port_match:
+                                port = next(p for p in port_match.groups() if p)
+                                if int(port) not in ports:
+                                    ports.append(int(port))
+                    
+                    return ports
+
+                def analyze_service(service_name, service_data):
+                    """Analyze a single service using its markers."""
+                    markers = service_data["markers"]
+                    service_path = service_data["path"]
+                    
+                    lang = detect_language_from_markers(markers, service_path)
+                    
+                    return {
+                        "path": service_path,
+                        "has_dockerfile": "Dockerfile" in [Path(m).name for m in markers],
+                        "language": lang,
+                        "framework": detect_framework(markers, service_path, lang),
+                        "ports": detect_ports(markers, service_path),
+                        "databases": detect_databases(markers, service_path, lang),
+                        "queues": detect_queues(markers, service_path, lang)
+                    }
+
+                # =============================================================================
+                # MAIN EXECUTION
+                # =============================================================================
+                try:
+                    print("=== FAST SERVICE DETECTION ===")
+                    print("Step 1: Scanning for service markers...")
+                    service_markers = find_markers_fast()
+                    print(f"  Found {len(service_markers)} services")
+
+                    print("Step 2: Analyzing service configurations...")
+                    services = {}
+                    for service_name, service_data in service_markers.items():
+                        print(f"  Analyzing: {service_name}")
+                        try:
+                            services[service_name] = analyze_service(service_name, service_data)
+                        except Exception as e:
+                            print(f"  Error analyzing {service_name}: {e}")
+                            services[service_name] = {
+                                "path": service_data.get("path", "."),
+                                "has_dockerfile": False,
+                                "language": PRIMARY_LANGUAGE or "unknown",
+                                "framework": None,
+                                "ports": [],
+                                "databases": [],
+                                "queues": [],
+                                "error": str(e)
+                            }
+
+                    profile = {
+                        "services": services,
+                        "repo_url": "{{ inputs.repo_url }}",
+                        "service_count": len(services),
+                        "languages": ALL_LANGUAGES,
+                        "primary_language": PRIMARY_LANGUAGE
+                    }
+
+                    with open("service_profile.json", "w") as f:
+                        json.dump(profile, f, indent=2)
+                    print("\n=== OUTPUT ===")
+                    print(json.dumps(profile, indent=2))
+
+                except Exception as e:
+                    print(f"FATAL ERROR: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    # Still write an output file so the pipeline doesn't completely fail
+                    profile = {
+                        "services": {},
+                        "repo_url": "{{ inputs.repo_url }}",
+                        "service_count": 0,
+                        "languages": ALL_LANGUAGES,
+                        "primary_language": PRIMARY_LANGUAGE,
+                        "error": str(e)
+                    }
+                    with open("service_profile.json", "w") as f:
+                        json.dump(profile, f, indent=2)
+                    print(json.dumps(profile, indent=2))
 
 outputs:
-  - id: service_profile
-    type: FILE
-    value: "{{ outputs.working_dir.outputFiles['service_profile.json'] }}"
+    - id: service_profile
+      type: FILE
+      value: "{{ outputs.working_dir.outputFiles['service_profile.json'] }}"

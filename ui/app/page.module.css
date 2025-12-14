@@ -270,6 +270,36 @@
   line-height: 1.6;
 }
 
+/* Configure Promo */
+.configurePromo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-2xl);
+  padding: var(--spacing-xl);
+  background: var(--color-bg-card);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.configurePromo p {
+  font-size: 0.95rem;
+  color: var(--color-text-secondary);
+}
+
+.configureLink {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  transition: all var(--transition-fast);
+}
+
+.configureLink:hover {
+  color: var(--color-accent-muted);
+}
+
 /* ===== CTA Section ===== */
 .cta {
   padding: var(--spacing-3xl) var(--spacing-lg);
