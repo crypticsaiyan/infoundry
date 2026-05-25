@@ -2,6 +2,8 @@
 
 InFoundry is a self-adaptive Cloud Architect + SRE agent that inspects codebases and telemetry, proposes deployable IaC/CI changes, runs safe test deployments, and iteratively optimizes cost, latency, and reliability with human-in-the-loop approvals.
 
+Demo: https://youtu.be/FSsgkSt77LM
+
 ## Features
 
 - **AI-Powered Architecture Recommendations** - Uses fine-tuned Oumi model for intelligent cloud architecture decisions
